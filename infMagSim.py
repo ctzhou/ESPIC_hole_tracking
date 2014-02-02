@@ -133,16 +133,17 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                     left_index = int((particles[0,i]-z_min)/dz)
                     if (left_index<0 or left_index>n_points-2):
                         print 'bad left_index:', left_index, z_min, particles[0,i], z_max
-                    fraction_to_left = particles[0,i] % dz
+                    fraction_to_left = ( particles[0,i] % dz )/dz
                     current_potential = potential[left_index]*fraction_to_left + \
                         potential[left_index+1]*(1.-fraction_to_left)
                 if (not within_bounds) or (current_potential<potential_threshold):
+                    particles[0,i] = 2*z_max
                     empty_slots[current_empty_slot] = i
                     current_empty_slot += 1
                     if (current_empty_slot>largest_allowed_slot):
                         print 'bad current_empty_slot:', current_empty_slot, largest_allowed_slot
         if (within_bounds):
-            fraction_to_left = particles[0,i] % dz
+            fraction_to_left = ( particles[0,i] % dz )/dz
             density[left_index] += fraction_to_left/background_density
             density[left_index+1] += (1-fraction_to_left)/background_density
     largest_index_list[0] = largest_index
@@ -180,7 +181,7 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef float fraction_to_left
     cdef int left_index
     cdef np.ndarray[np.float32_t,ndim=1] partial_dt = \
-	np.maximum( eps*np.ones(n_inject,dtype=np.float32), dt*np.random.rand(n_inject).astype(np.float32) )
+        np.maximum( eps*np.ones(n_inject,dtype=np.float32), dt*np.random.rand(n_inject).astype(np.float32) )
     cdef np.ndarray[np.float32_t,ndim=1] velocity_sign = np.sign(np.random.rand(n_inject).astype(np.float32)-0.5)
     cdef np.ndarray[np.float32_t,ndim=1] positive_velocities = draw_positive_velocities(n_inject,v_th)
     cdef int l,i
@@ -199,7 +200,7 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
         if (left_index<0 or left_index>n_points-2):
             print 'bad left_index:', left_index, z_min, particles[0,i], z_max, particles[1,i], partial_dt[l]
         else:
-            fraction_to_left = particles[0,i] % dz
+            fraction_to_left = ( particles[0,i] % dz )/dz
             density[left_index] += fraction_to_left/background_density
             density[left_index+1] += (1-fraction_to_left)/background_density
             empty_slots[current_empty_slot] = -1
@@ -209,33 +210,6 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
 
 # <codecell>
 
-def potential_snapshot(grid, t, t_object_center, v_drift, debye_length, object_potential, potential):
-    n_points = len(grid)
-    z_min = grid[0]
-    z_max = grid[n_points-1]
-    z_center = (z_max+z_min)/2
-    object_radius = 1.
-    t_enter_object = t_object_center - object_radius/v_drift
-    t_leave_object = t_object_center + object_radius/v_drift
-    if (t<t_enter_object):
-	object_width = 0.
-	dist_to_obj = (t_enter_object-t)*v_drift
-    elif (t>t_leave_object):
-	object_width = 0.
-	dist_to_obj = (t-t_leave_object)*v_drift
-    else:
-	x = (t-t_object_center)*v_drift
-	object_width = math.sqrt(1-x*x) # Circular cross-section
-	dist_to_obj = 0.
-    potential_normalization = math.exp(-dist_to_obj/debye_length)*object_potential
-    for j in range(n_points):
-	if (math.fabs(grid[j]-z_center)<object_width):
-	    potential[j] = object_potential
-	elif (grid[j]>z_center):
-	    potential[j] = potential_normalization*(1-((grid[j]-z_center)-object_width)/((z_max-z_center)-object_width))
-	else: # (grid[j]<z_center):
-	    potential[j] = potential_normalization*(1-((z_center-grid[j])-object_width)/((z_center-z_min)-object_width))
-
 def tridiagonal_solve(a, b, c, d, x): # also modifies b and d
     n = len(d)
     for i in range(n-1):
@@ -244,19 +218,94 @@ def tridiagonal_solve(a, b, c, d, x): # also modifies b and d
     for i in reversed(range(n-1)):
         d[i] -= d[i+1] * c[i] / b[i+1]
     for i in range(n):
-	x[i] = d[i]/b[i]
+        x[i] = d[i]/b[i]
 
-def poisson_solve(grid, charge, debye_length, potential):
+def poisson_solve(grid, charge, debye_length, potential, t=0, t_object_center=10, v_drift=1., object_potential=-4.):
+    eps = 1.e-5
     n_points = len(grid)
+    z_min = grid[0]
+    z_max = grid[n_points-1]
+    z_center = (z_max+z_min)/2
+    z_object = grid[n_points/2]
     dz = grid[1]-grid[0]
-    diagonal = -2*np.ones(n_points,dtype=np.float64)
+    if (math.fabs(z_object-z_center)>eps):
+        print 'object not centered'
+
+    diagonal = -2*np.ones(n_points-2,dtype=np.float64) # Exclude dirichlet boundaries
     lower_diagonal = 1*np.ones_like(diagonal)
     upper_diagonal = 1*np.ones_like(diagonal)
-    right_hand_side = -dz*dz*charge.astype(np.float64)/debye_length/debye_length
+    right_hand_side = -dz*dz*charge.astype(np.float64)[1:n_points-1]/debye_length/debye_length
+
+    # TODO: resolve issues when object boundaries fall on grid points
+    object_radius = 1.+eps
+    t_enter_object = t_object_center - object_radius/v_drift
+    t_leave_object = t_object_center + object_radius/v_drift
+    if (t<t_enter_object):
+        object_width = 0.
+        dist_to_obj = (t_enter_object-t)*v_drift
+    elif (t>t_leave_object):
+        object_width = 0.
+        dist_to_obj = (t-t_leave_object)*v_drift
+    else:
+        x = (t-t_object_center)*v_drift
+        object_width = math.sqrt(1-x*x) # Circular cross-section
+        dist_to_obj = 0.
+
+    if (object_width>0):
+        z_object_left = z_object - object_width
+        outside_index_left = int((z_object_left-z_min)/dz) -1 # -1 since excluding bdy
+        zeta_left = z_object_left % dz
+
+        z_object_right = z_object + object_width
+        outside_index_right = int((z_object_right-z_min)/dz)+1 -1 # -1 since excluding bdy
+        zeta_right = dz - (z_object_right % dz)
+
+        # Closest point outside to left
+        lower_diagonal[outside_index_left-1] = zeta_left/dz # -1 since lower diagonal shifted
+        diagonal[outside_index_left] = -1. - zeta_left/dz
+        upper_diagonal[outside_index_left] = 0.
+        right_hand_side[outside_index_left] *= zeta_left/dz
+        right_hand_side[outside_index_left] -= object_potential
+        
+        # Closest point outside to right
+        lower_diagonal[outside_index_right-1] = 0. # -1 since lower diagonal shifted
+        diagonal[outside_index_right] = -1. - zeta_right/dz
+        upper_diagonal[outside_index_right] = zeta_right/dz
+        right_hand_side[outside_index_right] *= zeta_right/dz
+        right_hand_side[outside_index_right] -= object_potential
+
+        object_index = n_points/2 -1 # -1 since excluding bdy
+        if (object_width<dz):
+            # Only point inside
+            if (outside_index_left!=object_index-1 or outside_index_right!=object_index+1):
+                print 'problem with object indices:', outside_index_left, object_index, outside_index_right
+            lower_diagonal[object_index-1] = -(1.-zeta_left/dz)/2. # -1 since lower diagonal shifted
+            diagonal[object_index] = -(zeta_left+zeta_right)/dz/2.
+            upper_diagonal[object_index] = -(1.-zeta_right/dz)/2.
+            right_hand_side[object_index] = -object_potential
+        else:
+            # Closest point inside to left
+            lower_diagonal[outside_index_left+1-1] = -(1.-zeta_left/dz) # -1 since lower diagonal shifted
+            diagonal[outside_index_left+1] = -zeta_left/dz
+            upper_diagonal[outside_index_left+1] = 0.
+            right_hand_side[outside_index_left+1] = -object_potential
+            
+            # Closest point inside to right
+            lower_diagonal[outside_index_right-1-1] = 0. # -1 since lower diagonal shifted
+            diagonal[outside_index_right-1] = -zeta_right/dz
+            upper_diagonal[outside_index_right-1] = -(1.-zeta_right/dz)
+            right_hand_side[outside_index_right-1] = -object_potential
+            
+            # Remaining interior points
+            for j in range(outside_index_left+2, outside_index_right-1):
+                right_hand_side[j] = 0. # Constant derivative inside object (hopefully zero)
+    
     result = np.zeros_like(diagonal)
+    potential[0] = 0.
+    potential[n_points-1] = 0.
     tridiagonal_solve(lower_diagonal, diagonal, upper_diagonal, right_hand_side, result)
-    for j in range(n_points):
-	potential[j] = result[j].astype(np.float32)
+    for j in range(1,n_points-1):
+        potential[j] = result[j-1].astype(np.float32)
 
 # <codecell>
 
@@ -265,7 +314,7 @@ accumulate_density(grid, background_ion_density, largest_ion_index, ions, ion_de
 electron_density = np.zeros_like(grid)
 accumulate_density(grid, background_electron_density, largest_electron_index, electrons, electron_density)
 potential = np.zeros_like(grid)
-dt = 0.1/v_th_e*10
+dt = 0.1/v_th_e
 ion_charge_to_mass = 1
 initialize_mover(grid, potential, dt, ion_charge_to_mass, largest_ion_index, ions)
 electron_charge_to_mass = -1/mass_ratio
@@ -273,13 +322,13 @@ initialize_mover(grid, potential, dt, electron_charge_to_mass, largest_electron_
 
 # <codecell>
 
-external_potential = np.zeros_like(grid)
-poisson_solve(grid, ion_density-electron_density, 10 ,potential)
-potential_snapshot(grid, 0, 5.5, 0.2*v_th_i, 0.1, -3., external_potential)
-potential += external_potential
+v_drift = 1.0*v_th_i
+t_object_center = 1.01/v_drift
+poisson_solve(grid, ion_density-electron_density, 10 , potential, \
+                  t=0, t_object_center=t_object_center, v_drift=v_drift, object_potential=-3.)
 fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
 for ax, data in zip(axes,[potential, ion_density-electron_density]):
-    ax.plot(grid,data)
+    ax.plot(grid[n_points/2-3:n_points/2+4],data[n_points/2-3:n_points/2+4])
 filename='data.png'
 plt.savefig(filename)
 IPdisp.Image(filename=filename)
@@ -287,34 +336,42 @@ IPdisp.Image(filename=filename)
 # <codecell>
 
 %%time
-n_steps = 10
+n_steps = 100
 t = 0
 #injection_seed = 8734
 #np.random.seed(injection_seed)
 for k in range(n_steps):
     move_particles(grid, potential, dt, ion_charge_to_mass, background_ion_density, largest_ion_index, ions, ion_density, \
-		       empty_ion_slots, current_empty_ion_slot)
+                       empty_ion_slots, current_empty_ion_slot)
     move_particles(grid, potential, dt, electron_charge_to_mass, background_electron_density, largest_electron_index, \
-		       electrons, electron_density, empty_electron_slots, current_empty_electron_slot)
+                       electrons, electron_density, empty_electron_slots, current_empty_electron_slot)
     expected_ion_injection = 2*dt*v_th_i/math.sqrt(2*math.pi)*n_ions/(z_max-z_min)
     n_ions_inject = int(expected_ion_injection)
     expected_electron_injection = 2*dt*v_th_e/math.sqrt(2*math.pi)*n_electrons/(z_max-z_min)
     n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
     if (expected_ion_injection-n_ions_inject)>np.random.rand():
-	n_ions_inject += 1
+        n_ions_inject += 1
     if (expected_ion_injection-n_electrons_inject)>np.random.rand():
-	n_electrons_inject += 1
+        n_electrons_inject += 1
     #print current_empty_ion_slot, current_empty_electron_slot, n_ions_inject, n_electrons_inject
     inject_particles(n_ions_inject, grid, dt, v_th_i, background_ion_density, ions, empty_ion_slots, \
-			 current_empty_ion_slot, largest_ion_index, ion_density)
+                         current_empty_ion_slot, largest_ion_index, ion_density)
     inject_particles(n_electrons_inject, grid, dt, v_th_e, background_electron_density, electrons, empty_electron_slots, \
-			 current_empty_electron_slot, largest_electron_index, electron_density)
+                         current_empty_electron_slot, largest_electron_index, electron_density)
     #print current_empty_ion_slot, current_empty_electron_slot, largest_ion_index, largest_electron_index
     t += dt
-    poisson_solve(grid, ion_density-electron_density, debye_length, potential)
-    potential_snapshot(grid, 0, 5.5, 0.2*v_th_i, 0.1, -3., external_potential)
-    potential += external_potential
+    poisson_solve(grid, ion_density-electron_density, 10 , potential, \
+                      t=t, t_object_center=t_object_center, v_drift=v_drift, object_potential=-3.)
+
+# <codecell>
+
+fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
+for ax, data in zip(axes,[potential, ion_density-electron_density]):
+    ax.plot(grid[n_points/2-3:n_points/2+4],data[n_points/2-3:n_points/2+4])
+filename='data.png'
+plt.savefig(filename)
+IPdisp.Image(filename=filename)
 
 # <codecell>
 
