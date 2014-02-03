@@ -231,7 +231,7 @@ def tridiagonal_solve(np.ndarray[np.float64_t,ndim=1] a, np.ndarray[np.float64_t
 
 def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,ndim=1] charge, float debye_length, \
                       np.ndarray[np.float32_t,ndim=1] potential, float t=0, float t_object_center=10, \
-                      float v_drift=1., float object_potential=-4.):
+                      float v_drift=1., float object_potential=-4., int enforce_bdy_cond_outside=False):
     cdef float eps = 1.e-5
     cdef int n_points = len(grid)
     cdef float z_min = grid[0]
@@ -262,19 +262,30 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
         x = (t-t_object_center)*v_drift
         object_width = math.sqrt(1-x*x) # Circular cross-section
         dist_to_obj = 0.
+    if (dist_to_obj>0. and enforce_bdy_cond_outside):
+        #object_potential *= math.exp(-dist_to_obj/debye_length)
+        object_width = eps
 
     cdef float z_object_left, z_object_right
     cdef int outside_index_left, outside_index_right
     cdef float zeta_left, zeta_right
     cdef int object_index, j
-    if (object_width>0):
+    if (object_width>0.):
         z_object_left = z_object - object_width
         outside_index_left = int((z_object_left-z_min)/dz) -1 # -1 since excluding bdy
         zeta_left = z_object_left % dz
+        if (zeta_left==0.):
+            zeta_left += eps
+        elif (zeta_left>dz-eps):
+            zeta_left = dz-eps
 
         z_object_right = z_object + object_width
         outside_index_right = int((z_object_right-z_min)/dz)+1 -1 # -1 since excluding bdy
         zeta_right = dz - (z_object_right % dz)
+        if (zeta_right==0.):
+            zeta_right += eps
+        elif (zeta_right>dz-eps):
+            zeta_right = dz-eps
 
         # Closest point outside to left
         lower_diagonal[outside_index_left-1] = zeta_left/dz # -1 since lower diagonal shifted
@@ -323,6 +334,7 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
     cdef np.ndarray[np.float32_t,ndim=1] result_32 = result.astype(np.float32)
     for j in range(1,n_points-1):
         potential[j] = result_32[j-1]
+    return dist_to_obj
 
 # <codecell>
 
@@ -331,6 +343,7 @@ accumulate_density(grid, background_ion_density, largest_ion_index, ions, ion_de
 electron_density = np.zeros_like(grid)
 accumulate_density(grid, background_electron_density, largest_electron_index, electrons, electron_density)
 potential = np.zeros_like(grid)
+no_object_potential = np.zeros_like(grid)
 dt = 0.1/v_th_e
 ion_charge_to_mass = 1
 initialize_mover(grid, potential, dt, ion_charge_to_mass, largest_ion_index, ions)
@@ -340,25 +353,41 @@ initialize_mover(grid, potential, dt, electron_charge_to_mass, largest_electron_
 # <codecell>
 
 v_drift = 1.0*v_th_i
-t_object_center = 1.01/v_drift
 debye_length = 0.5
-t = 0
-poisson_solve(grid, ion_density-electron_density, debye_length , potential, \
-                  t=t, t_object_center=t_object_center, v_drift=v_drift, object_potential=-3.)
-fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
-for ax, data in zip(axes,[potential, ion_density-electron_density]):
-    ax.plot(grid[n_points/2-3:n_points/2+4],data[n_points/2-3:n_points/2+4])
-filename='data.png'
-plt.savefig(filename)
-IPdisp.Image(filename=filename)
+t_object_center = (1.+2*debye_length)/v_drift
+t = 0.
+potentials = []
+ion_densities = []
+electron_densities = []
+times = []
+print t_object_center
 
 # <codecell>
 
 %%time
-n_steps = 400
+n_steps = 2000
+storage_step = 1
 #injection_seed = 8734
 #np.random.seed(injection_seed)
 for k in range(n_steps):
+    dist_to_obj = poisson_solve(grid, ion_density-electron_density, debye_length, potential, \
+                                    t=t, t_object_center=t_object_center, v_drift=v_drift, object_potential=-3., \
+                                    enforce_bdy_cond_outside=True)
+    dump = poisson_solve(grid, ion_density-electron_density, debye_length, no_object_potential)
+    fraction_of_obj_pot = math.exp(-dist_to_obj/debye_length)
+    #fraction_of_obj_pot = debye_length/(dist_to_obj+debye_length)
+    potential = potential*fraction_of_obj_pot + no_object_potential*(1.-fraction_of_obj_pot)
+    if (k%storage_step==0):
+        times.append(t)
+        copy = np.empty_like(ion_density)
+        copy[:] = ion_density
+        ion_densities.append(copy)
+        copy = np.empty_like(electron_density)
+        copy[:] = electron_density
+        electron_densities.append(copy)
+        copy = np.empty_like(potential)
+        copy[:] = potential
+        potentials.append(copy)
     move_particles(grid, potential, dt, ion_charge_to_mass, background_ion_density, largest_ion_index, ions, ion_density, \
                        empty_ion_slots, current_empty_ion_slot)
     move_particles(grid, potential, dt, electron_charge_to_mass, background_electron_density, largest_electron_index, \
@@ -379,16 +408,36 @@ for k in range(n_steps):
                          current_empty_electron_slot, largest_electron_index, electron_density)
     #print current_empty_ion_slot, current_empty_electron_slot, largest_ion_index, largest_electron_index
     t += dt
-    poisson_solve(grid, ion_density-electron_density, debye_length , potential, \
-                      t=t, t_object_center=t_object_center, v_drift=v_drift, object_potential=-3.)
-print t
+print times[0], times[len(times)-1]
+
+# <codecell>
+
+k = len(times)-1
+#k = 12
+#k = 1879
+print times[k]
+fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
+for ax, data in zip(axes,[potentials[k], ion_densities[k]-electron_densities[k]]):
+    ax.plot(grid,data)
+filename='figures/data.png'
+plt.savefig(filename)
+IPdisp.Image(filename=filename)
+
+# <codecell>
+
+fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
+for ax, data in zip(axes,[ion_densities[k],electron_densities[k]]):
+    ax.plot(grid,data)
+filename='figures/data.png'
+plt.savefig(filename)
+IPdisp.Image(filename=filename)
 
 # <codecell>
 
 fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
 for ax, data in zip(axes,[potential, ion_density-electron_density]):
     ax.plot(grid,data)
-filename='data.png'
+filename='figures/data.png'
 plt.savefig(filename)
 IPdisp.Image(filename=filename)
 
