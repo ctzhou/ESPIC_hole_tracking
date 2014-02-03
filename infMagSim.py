@@ -210,36 +210,48 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
 
 # <codecell>
 
-def tridiagonal_solve(a, b, c, d, x): # also modifies b and d
-    n = len(d)
-    for i in range(n-1):
-        d[i+1] -= d[i] * a[i] / b[i]
-        b[i+1] -= c[i] * a[i] / b[i]
-    for i in reversed(range(n-1)):
-        d[i] -= d[i+1] * c[i] / b[i+1]
-    for i in range(n):
-        x[i] = d[i]/b[i]
+%%cython
+cimport cython
+import numpy as np
+cimport numpy as np
+import math
 
-def poisson_solve(grid, charge, debye_length, potential, t=0, t_object_center=10, v_drift=1., object_potential=-4.):
-    eps = 1.e-5
-    n_points = len(grid)
-    z_min = grid[0]
-    z_max = grid[n_points-1]
-    z_center = (z_max+z_min)/2
-    z_object = grid[n_points/2]
-    dz = grid[1]-grid[0]
+def tridiagonal_solve(np.ndarray[np.float64_t,ndim=1] a, np.ndarray[np.float64_t,ndim=1] b, \
+                          np.ndarray[np.float64_t,ndim=1] c, np.ndarray[np.float64_t,ndim=1] d, \
+                          np.ndarray[np.float64_t,ndim=1] x): # also modifies b and d
+    cdef int n = len(d)
+    cdef int j
+    for j in range(n-1):
+        d[j+1] -= d[j] * a[j] / b[j]
+        b[j+1] -= c[j] * a[j] / b[j]
+    for j in reversed(range(n-1)):
+        d[j] -= d[j+1] * c[j] / b[j+1]
+    for j in range(n):
+        x[j] = d[j]/b[j]
+
+def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,ndim=1] charge, float debye_length, \
+                      np.ndarray[np.float32_t,ndim=1] potential, float t=0, float t_object_center=10, \
+                      float v_drift=1., float object_potential=-4.):
+    cdef float eps = 1.e-5
+    cdef int n_points = len(grid)
+    cdef float z_min = grid[0]
+    cdef float z_max = grid[n_points-1]
+    cdef float z_center = (z_max+z_min)/2
+    cdef float z_object = grid[n_points/2]
+    cdef float dz = grid[1]-grid[0]
     if (math.fabs(z_object-z_center)>eps):
         print 'object not centered'
 
-    diagonal = -2*np.ones(n_points-2,dtype=np.float64) # Exclude dirichlet boundaries
-    lower_diagonal = 1*np.ones_like(diagonal)
-    upper_diagonal = 1*np.ones_like(diagonal)
-    right_hand_side = -dz*dz*charge.astype(np.float64)[1:n_points-1]/debye_length/debye_length
+    cdef np.ndarray[np.float64_t,ndim=1] diagonal = -2*np.ones(n_points-2,dtype=np.float64) # Exclude dirichlet boundaries
+    cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal = 1*np.ones_like(diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] upper_diagonal = 1*np.ones_like(diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] right_hand_side = -dz*dz*charge.astype(np.float64)[1:n_points-1]/debye_length/debye_length
 
     # TODO: resolve issues when object boundaries fall on grid points
-    object_radius = 1.+eps
-    t_enter_object = t_object_center - object_radius/v_drift
-    t_leave_object = t_object_center + object_radius/v_drift
+    cdef float object_radius = 1.+eps
+    cdef float t_enter_object = t_object_center - object_radius/v_drift
+    cdef float t_leave_object = t_object_center + object_radius/v_drift
+    cdef float object_width, dist_to_obj, x
     if (t<t_enter_object):
         object_width = 0.
         dist_to_obj = (t_enter_object-t)*v_drift
@@ -251,6 +263,10 @@ def poisson_solve(grid, charge, debye_length, potential, t=0, t_object_center=10
         object_width = math.sqrt(1-x*x) # Circular cross-section
         dist_to_obj = 0.
 
+    cdef float z_object_left, z_object_right
+    cdef int outside_index_left, outside_index_right
+    cdef float zeta_left, zeta_right
+    cdef int object_index, j
     if (object_width>0):
         z_object_left = z_object - object_width
         outside_index_left = int((z_object_left-z_min)/dz) -1 # -1 since excluding bdy
@@ -300,12 +316,13 @@ def poisson_solve(grid, charge, debye_length, potential, t=0, t_object_center=10
             for j in range(outside_index_left+2, outside_index_right-1):
                 right_hand_side[j] = 0. # Constant derivative inside object (hopefully zero)
     
-    result = np.zeros_like(diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] result = np.zeros_like(diagonal)
     potential[0] = 0.
     potential[n_points-1] = 0.
     tridiagonal_solve(lower_diagonal, diagonal, upper_diagonal, right_hand_side, result)
+    cdef np.ndarray[np.float32_t,ndim=1] result_32 = result.astype(np.float32)
     for j in range(1,n_points-1):
-        potential[j] = result[j-1].astype(np.float32)
+        potential[j] = result_32[j-1]
 
 # <codecell>
 
@@ -324,8 +341,10 @@ initialize_mover(grid, potential, dt, electron_charge_to_mass, largest_electron_
 
 v_drift = 1.0*v_th_i
 t_object_center = 1.01/v_drift
-poisson_solve(grid, ion_density-electron_density, 10 , potential, \
-                  t=0, t_object_center=t_object_center, v_drift=v_drift, object_potential=-3.)
+debye_length = 0.5
+t = 0
+poisson_solve(grid, ion_density-electron_density, debye_length , potential, \
+                  t=t, t_object_center=t_object_center, v_drift=v_drift, object_potential=-3.)
 fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
 for ax, data in zip(axes,[potential, ion_density-electron_density]):
     ax.plot(grid[n_points/2-3:n_points/2+4],data[n_points/2-3:n_points/2+4])
@@ -336,8 +355,7 @@ IPdisp.Image(filename=filename)
 # <codecell>
 
 %%time
-n_steps = 100
-t = 0
+n_steps = 400
 #injection_seed = 8734
 #np.random.seed(injection_seed)
 for k in range(n_steps):
@@ -361,8 +379,18 @@ for k in range(n_steps):
                          current_empty_electron_slot, largest_electron_index, electron_density)
     #print current_empty_ion_slot, current_empty_electron_slot, largest_ion_index, largest_electron_index
     t += dt
-    poisson_solve(grid, ion_density-electron_density, 10 , potential, \
+    poisson_solve(grid, ion_density-electron_density, debye_length , potential, \
                       t=t, t_object_center=t_object_center, v_drift=v_drift, object_potential=-3.)
+print t
+
+# <codecell>
+
+fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
+for ax, data in zip(axes,[potential, ion_density-electron_density]):
+    ax.plot(grid,data)
+filename='data.png'
+plt.savefig(filename)
+IPdisp.Image(filename=filename)
 
 # <codecell>
 
@@ -406,6 +434,15 @@ IPdisp.Image(filename=filename)
 # no inj or plot: 13.5ms
 # 100x part: 1.25s (might have been fluke; more like below)
 # no bounds check: 973ms
+
+# <codecell>
+
+
+# <codecell>
+
+
+# <codecell>
+
 
 # <codecell>
 
