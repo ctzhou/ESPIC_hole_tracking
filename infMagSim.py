@@ -138,10 +138,10 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                         potential[left_index+1]*(1.-fraction_to_left)
                 if (not within_bounds) or (current_potential<potential_threshold):
                     particles[0,i] = 2*z_max
-                    empty_slots[current_empty_slot] = i
                     current_empty_slot += 1
                     if (current_empty_slot>largest_allowed_slot):
                         print 'bad current_empty_slot:', current_empty_slot, largest_allowed_slot
+                    empty_slots[current_empty_slot] = i
         if (within_bounds):
             fraction_to_left = ( particles[0,i] % dz )/dz
             density[left_index] += fraction_to_left/background_density
@@ -174,14 +174,13 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef int largest_index = largest_index_list[0]
     cdef int current_empty_slot = current_empty_slot_list[0]
     cdef int n_points = len(grid)
-    cdef float eps=1.e-4/v_th
+    cdef float eps=1.e-5
     cdef float z_min = grid[0]
     cdef float z_max = grid[n_points-1]
     cdef float dz = grid[1]-grid[0]
     cdef float fraction_to_left
     cdef int left_index
-    cdef np.ndarray[np.float32_t,ndim=1] partial_dt = \
-        np.maximum( eps*np.ones(n_inject,dtype=np.float32), dt*np.random.rand(n_inject).astype(np.float32) )
+    cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*np.random.rand(n_inject).astype(np.float32)
     cdef np.ndarray[np.float32_t,ndim=1] velocity_sign = np.sign(np.random.rand(n_inject).astype(np.float32)-0.5)
     cdef np.ndarray[np.float32_t,ndim=1] positive_velocities = draw_positive_velocities(n_inject,v_th)
     cdef int l,i
@@ -191,9 +190,9 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
         i = empty_slots[current_empty_slot]
         particles[1,i] = velocity_sign[l]*positive_velocities[l]
         if (velocity_sign[l]<0):
-            particles[0,i] = z_max + partial_dt[l]*particles[1,i]
+            particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
         else:
-            particles[0,i] = z_min + partial_dt[l]*particles[1,i]
+            particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
         if (empty_slots[current_empty_slot]>largest_index):
             largest_index = empty_slots[current_empty_slot]
         left_index = int((particles[0,i]-z_min)/dz)
@@ -352,7 +351,7 @@ initialize_mover(grid, potential, dt, electron_charge_to_mass, largest_electron_
 
 # <codecell>
 
-v_drift = 1.0*v_th_i
+v_drift = 0.5*v_th_i
 debye_length = 0.5
 t_object_center = (1.+2*debye_length)/v_drift
 t = 0.
@@ -365,7 +364,7 @@ print t_object_center
 # <codecell>
 
 %%time
-n_steps = 2000
+n_steps = 40
 storage_step = 1
 #injection_seed = 8734
 #np.random.seed(injection_seed)
@@ -412,9 +411,25 @@ print times[0], times[len(times)-1]
 
 # <codecell>
 
+times_np = np.array(times, dtype=np.float32)
+potentials_np = np.array(potentials, dtype=np.float32)
+ion_densities_np = np.array(ion_densities, dtype=np.float32)
+electron_densities_np = np.array(electron_densities, dtype=np.float32)
+filename = 'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
+print filename
+np.savez(filename,times=times_np,potentials=potentials_np,ion_densities=ion_densities_np,electron_densities=electron_densities_np)
+
+# <codecell>
+
+data_file = np.load(filename+'.npz')
+print data_file.files
+print data_file['potentials'][k]
+
+# <codecell>
+
 k = len(times)-1
 #k = 12
-#k = 1879
+#k = 2075
 print times[k]
 fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
 for ax, data in zip(axes,[potentials[k], ion_densities[k]-electron_densities[k]]):
@@ -456,7 +471,7 @@ fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
 for ax, data in zip(axes,electrons):
     n_bins = n_points;
     occupied_slots = (data==data)
-    occupied_slots[empty_electron_slots[0:current_empty_electron_slot[0]]] = False
+    occupied_slots[empty_electron_slots[0:current_empty_electron_slot[0]+1]] = False
     ax.hist(data[occupied_slots],bins=n_bins, histtype='step')
 filename='data.png'
 plt.savefig(filename)
@@ -468,7 +483,7 @@ fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
 for ax, data in zip(axes,ions):
     n_bins = n_points;
     occupied_slots = (data==data)
-    occupied_slots[empty_ion_slots[0:current_empty_ion_slot[0]]] = False
+    occupied_slots[empty_ion_slots[0:current_empty_ion_slot[0]+1]] = False
     ax.hist(data[occupied_slots],bins=n_bins, histtype='step')
 filename='data.png'
 plt.savefig(filename)
