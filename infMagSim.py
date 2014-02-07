@@ -89,7 +89,7 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
 
 z_min = -25.
 z_max = 25.
-n_cells = 100
+n_cells = 1000
 n_points = n_cells+1
 dz = (z_max-z_min)/(n_points-1)
 print 'dz =', dz
@@ -101,7 +101,7 @@ grid = np.arange(z_min,z_max+eps,dz,dtype=np.float32)
 extra_storage_factor = 1.2
 ion_seed = 384
 np.random.seed(ion_seed)
-n_ions = 1000000
+n_ions = 5000000
 largest_ion_index = [n_ions-1]
 ion_storage_length = int(extra_storage_factor*n_ions)
 ions = np.zeros([2,ion_storage_length],dtype=np.float32)
@@ -156,8 +156,8 @@ IPdisp.Image(filename=filename)
 
 # <codecell>
 
-v_drift = 0.5*v_th_i
-debye_length = 0.5
+v_drift = 0.25*v_th_i
+debye_length = 0.125
 pot_transp_elong = 2.
 object_radius = 1.
 t_object_center = (1.+2.*pot_transp_elong*debye_length)/v_drift
@@ -190,7 +190,7 @@ initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, larg
 # <codecell>
 
 %%time
-n_steps = 40
+n_steps = 8000
 storage_step = 1
 #injection_seed = 8734
 #np.random.seed(injection_seed)
@@ -253,7 +253,7 @@ ion_densities_np = np.array(ion_densities, dtype=np.float32)
 electron_densities_np = np.array(electron_densities, dtype=np.float32)
 filename = 'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
 print filename
-np.savez(filename, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
+np.savez(filename, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
              ion_densities=ion_densities_np, electron_densities=electron_densities_np)
 
 data_file = np.load(filename+'.npz')
@@ -263,7 +263,6 @@ print data_file.files
 # <codecell>
 
 k = len(times)-1
-#k = 5228
 print times[k]
 fig, axes = plt.subplots(nrows=3,ncols=2,figsize=(8,6))
 for ax, data in zip(axes.flatten(),[potentials[k], ion_densities[k]-electron_densities[k], \
