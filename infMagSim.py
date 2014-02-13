@@ -114,7 +114,7 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
 
 z_min = -25.
 z_max = 25.
-n_cells = 1000
+n_cells = 10000
 n_points = n_cells+1
 dz = (z_max-z_min)/(n_points-1)
 eps = 1e-4
@@ -225,15 +225,15 @@ IPdisp.Image(filename=filename)
 
 # <codecell>
 
-v_drift = 0.25*v_th_i
-debye_length = 0.3125
+v_drift = 0.5*v_th_i
+debye_length = 0.25
 pot_transp_elong = 2.
 object_radius = 1.
 t_object_center = (1.+2.*pot_transp_elong*debye_length)/v_drift
 t = 0.
-dt = 0.1/v_th_e
+dt = 0.1*debye_length/v_th_e
 ion_charge_to_mass = 1
-print t_object_center
+print t_object_center, dt
 res = dview.push(dict(v_drift=v_drift, debye_length=debye_length, pot_transp_elong=pot_transp_elong, \
 			  object_radius=object_radius, t_object_center=t_object_center, t=t, dt=dt, \
 			  ion_charge_to_mass=ion_charge_to_mass))
@@ -267,11 +267,15 @@ initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, larg
 # <codecell>
 
 %%time
-n_steps = 40
-storage_step = 1
+n_steps = 20000
+storage_step = 10
+print_step = 1000
+ion_density = numpy.zeros_like(grid)
+electron_density = numpy.zeros_like(grid)
 for k in range(n_steps):
-    ion_density = numpy.zeros_like(grid)
-    electron_density = numpy.zeros_like(grid)
+    for j in range(len(ion_density)):
+	ion_density[j] = 0.
+	electron_density[j] = 0.
     for id in rc.ids:
 	ion_density += dview.pull('ion_density',targets=id)
 	electron_density += dview.pull('electron_density',targets=id)
@@ -300,6 +304,8 @@ for k in range(n_steps):
         copy = numpy.empty_like(potential)
         copy[:] = potential
         potentials.append(copy)
+    if (k%print_step==0):
+	print k
     res = dview.push(dict(object_mask=object_mask, potential=potential))
     %px move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
 			   background_ion_density, largest_ion_index, ions, ion_density, \
@@ -335,6 +341,13 @@ print times[0], times[len(times)-1]
 # 16 eng, 5x part, 10x grid: 1m18
 # 16 eng, 5x steps: 1m31
 # 16 eng, 10x grid, 5x steps: 1m37
+# 16 eng, 5x part, 10x grid, 100x steps: 2h7
+
+# <codecell>
+
+from guppy import hpy
+h = hpy()
+print h.heap()
 
 # <codecell>
 
@@ -343,7 +356,8 @@ object_masks_np = numpy.array(object_masks, dtype=numpy.float32)
 potentials_np = numpy.array(potentials, dtype=numpy.float32)
 ion_densities_np = numpy.array(ion_densities, dtype=numpy.float32)
 electron_densities_np = numpy.array(electron_densities, dtype=numpy.float32)
-filename = 'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
+filename = '/scratch/chaako/analysis/' + \
+    'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
 print filename
 numpy.savez(filename, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
              ion_densities=ion_densities_np, electron_densities=electron_densities_np)
@@ -363,6 +377,14 @@ for ax, data in zip(axes.flatten(),[potentials[k], ion_densities[k]-electron_den
 filename='figures/data.png'
 plt.savefig(filename)
 IPdisp.Image(filename=filename)
+
+# <codecell>
+
+import gc
+
+# <codecell>
+
+gc.collect()
 
 # <codecell>
 
