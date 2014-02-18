@@ -22,6 +22,8 @@ with dview.sync_imports():
     import math
     import numpy
     import matplotlib
+%px matplotlib.use('Agg') # non-GUI backend
+with dview.sync_imports():
     import matplotlib.pyplot
     from IPython.nbformat import current
     from mpi4py import MPI
@@ -32,6 +34,11 @@ with dview.sync_imports():
 comm = MPI.COMM_WORLD
 mpi_id = comm.Get_rank() # not equal rc.ids...
 #print mpi_id
+
+# <codecell>
+
+mpi_ids = numpy.array(dview.pull('mpi_id'))
+master_rc_id = numpy.arange(0,len(mpi_ids))[mpi_ids==0][0]
 
 # <codecell>
 
@@ -163,7 +170,7 @@ matplotlib.pyplot.savefig(filename)
 
 # <codecell>
 
-filename = dview.pull('filename', targets=0)
+filename = dview.pull('filename', targets=master_rc_id)
 IPdisp.Image(filename=filename)
 
 # <codecell>
@@ -202,7 +209,7 @@ matplotlib.pyplot.savefig(filename)
 
 # <codecell>
 
-filename = dview.pull('filename', targets=0)
+filename = dview.pull('filename', targets=master_rc_id)
 IPdisp.Image(filename=filename)
 
 # <codecell>
@@ -312,7 +319,7 @@ if (mpi_id==0):
     potentials_np = numpy.array(potentials, dtype=numpy.float32)
     ion_densities_np = numpy.array(ion_densities, dtype=numpy.float32)
     electron_densities_np = numpy.array(electron_densities, dtype=numpy.float32)
-    filename_base = '/scratch/chaako/analysis/' + \
+    filename_base = '/home/chaako/analysis/data/' + \
 	'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
     print filename_base
     numpy.savez(filename_base, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
@@ -320,9 +327,7 @@ if (mpi_id==0):
 
 # <codecell>
 
-mpi_ids = numpy.array(dview.pull('mpi_id'))
-master_mpi_id = numpy.arange(0,len(mpi_ids))[mpi_ids==0][0]
-filename = dview.pull('filename_base', targets=master_mpi_id) + '.npz'
+filename = dview.pull('filename_base', targets=master_rc_id) + '.npz'
 data_file = numpy.load(filename)
 print data_file.files
 grid = data_file['grid']
