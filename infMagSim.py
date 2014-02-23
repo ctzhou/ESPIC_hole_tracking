@@ -44,6 +44,10 @@ n_engines = comm.size
 
 # <codecell>
 
+boltzmann_electrons = True
+
+# <codecell>
+
 %%px
 def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
     # object_mask will give fraction of each cell inside object
@@ -106,7 +110,7 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
 %%px
 z_min = -25.
 z_max = 25.
-n_cells = 10000
+n_cells = 1000
 n_points = n_cells+1
 dz = (z_max-z_min)/(n_points-1)
 eps = 1e-4
@@ -125,9 +129,9 @@ numpy.random.seed(seed)
 %%px
 v_th_i = 1
 v_d_i = 0
-n_ions = 100000
+n_ions = 1000000
 extra_storage_factor = 1.2
-background_ion_density = n_ions*n_engines/(z_max-z_min)
+background_ion_density = n_ions*n_engines*dz/(z_max-z_min)
 n_bins = n_points;
 
 # <codecell>
@@ -157,47 +161,55 @@ if (mpi_id==0):
 # <codecell>
 
 %%px
-mass_ratio = 1./1836.
-n_electrons = n_ions
-v_th_e = 1./math.sqrt(mass_ratio)
-v_d_e = 0.
-background_electron_density = n_electrons*n_engines/(z_max-z_min)
-n_bins = n_points;
+if not boltzmann_electrons:
+    mass_ratio = 1./1836.
+    n_electrons = n_ions
+    v_th_e = 1./math.sqrt(mass_ratio)
+    v_d_e = 0.
+    background_electron_density = n_electrons*n_engines*dz/(z_max-z_min)
+    n_bins = n_points;
 
 # <codecell>
 
 %%px
-largest_electron_index = [n_electrons-1]
-electron_storage_length = int(n_electrons*extra_storage_factor)
-electrons = numpy.zeros([2,electron_storage_length],dtype=numpy.float32)
-electrons[0][0:n_electrons] = numpy.random.rand(n_electrons)*(z_max-z_min) + z_min # positions
-electrons[1][0:n_electrons] = numpy.random.randn(n_electrons)*v_th_e + v_d_e # velocities
-#electrons[2][0:n_electrons] = numpy.ones(n_ions,dtype=numpy.float32) # relative weights
-# List remaining slots in reverse order to prevent memory fragmentation
-empty_electron_slots = -numpy.ones(electron_storage_length,dtype=numpy.int)
-current_empty_electron_slot = [(electron_storage_length-n_electrons)-1]
-empty_electron_slots[0:(current_empty_electron_slot[0]+1)] = range(electron_storage_length-1,n_electrons-1,-1)
-electron_hist_n, electron_hist_n_edges = numpy.histogram(electrons[0][0:n_electrons], bins=n_bins)
-electron_hist_v, electron_hist_v_edges = numpy.histogram(electrons[1][0:n_electrons], bins=n_bins)
-comm.Allreduce(MPI.IN_PLACE, electron_hist_n, op=MPI.SUM)
-comm.Allreduce(MPI.IN_PLACE, electron_hist_v, op=MPI.SUM)
-if (mpi_id==0):
-    fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
-    for ax, data, bins in zip(axes,[electron_hist_n,electron_hist_v], [electron_hist_n_edges, electron_hist_v_edges]):
-	ax.step(bins,numpy.append(data,[0]), where='post')
-    filename='figures/initialElectronDistribution.png'
-    matplotlib.pyplot.savefig(filename)
+if not boltzmann_electrons:
+    largest_electron_index = [n_electrons-1]
+    electron_storage_length = int(n_electrons*extra_storage_factor)
+    electrons = numpy.zeros([2,electron_storage_length],dtype=numpy.float32)
+    electrons[0][0:n_electrons] = numpy.random.rand(n_electrons)*(z_max-z_min) + z_min # positions
+    electrons[1][0:n_electrons] = numpy.random.randn(n_electrons)*v_th_e + v_d_e # velocities
+    #electrons[2][0:n_electrons] = numpy.ones(n_ions,dtype=numpy.float32) # relative weights
+    # List remaining slots in reverse order to prevent memory fragmentation
+    empty_electron_slots = -numpy.ones(electron_storage_length,dtype=numpy.int)
+    current_empty_electron_slot = [(electron_storage_length-n_electrons)-1]
+    empty_electron_slots[0:(current_empty_electron_slot[0]+1)] = range(electron_storage_length-1,n_electrons-1,-1)
+    electron_hist_n, electron_hist_n_edges = numpy.histogram(electrons[0][0:n_electrons], bins=n_bins)
+    electron_hist_v, electron_hist_v_edges = numpy.histogram(electrons[1][0:n_electrons], bins=n_bins)
+    comm.Allreduce(MPI.IN_PLACE, electron_hist_n, op=MPI.SUM)
+    comm.Allreduce(MPI.IN_PLACE, electron_hist_v, op=MPI.SUM)
+    if (mpi_id==0):
+	fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
+	for ax, data, bins in zip(axes,[electron_hist_n,electron_hist_v], [electron_hist_n_edges, electron_hist_v_edges]):
+	    ax.step(bins,numpy.append(data,[0]), where='post')
+	    filename='figures/initialElectronDistribution.png'
+	    matplotlib.pyplot.savefig(filename)
 
 # <codecell>
 
 %%px
 v_drift = 0.125*v_th_i
-debye_length = 0.125
+if boltzmann_electrons:
+    debye_length = dz
+else:
+    debye_length = 0.125
 pot_transp_elong = 2.
 object_radius = 1.
 t_object_center = (1.+4.*pot_transp_elong*debye_length)/v_drift
 t = 0.
-dt = 0.1*debye_length/v_th_e
+if boltzmann_electrons:
+    dt = 0.05*debye_length/v_th_i
+else:
+    dt = 0.1*debye_length/v_th_e
 ion_charge_to_mass = 1
 if (mpi_id==0):
     print t_object_center, dt
@@ -222,33 +234,41 @@ if (mpi_id==0):
 %%px
 ion_density = numpy.zeros_like(grid)
 accumulate_density(grid, object_mask, background_ion_density, largest_ion_index, ions, ion_density)
-electron_density = numpy.zeros_like(grid)
-accumulate_density(grid, object_mask, background_electron_density, largest_electron_index, electrons, electron_density)
+if not boltzmann_electrons:
+    electron_density = numpy.zeros_like(grid)
+    accumulate_density(grid, object_mask, background_electron_density, largest_electron_index, electrons, electron_density)
 
 initialize_mover(grid, object_mask, potential, dt, ion_charge_to_mass, largest_ion_index, ions)
-electron_charge_to_mass = -1./mass_ratio
-initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, largest_electron_index, electrons)
+if not boltzmann_electrons:
+    electron_charge_to_mass = -1./mass_ratio
+    initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, largest_electron_index, electrons)
 
 # <codecell>
 
 %%px
-n_steps = 400000
-storage_step = 200
-print_step = 200
+n_steps = 20000
+storage_step = 1
+print_step = 100
 for k in range(n_steps):
     comm.Allreduce(MPI.IN_PLACE, ion_density, op=MPI.SUM)
-    comm.Allreduce(MPI.IN_PLACE, electron_density, op=MPI.SUM)
+    if not boltzmann_electrons:
+	comm.Allreduce(MPI.IN_PLACE, electron_density, op=MPI.SUM)
     dist_to_obj = circular_cross_section(grid, t, t_object_center, v_drift, object_radius, object_mask)
     object_potential = -3.
-    if (dist_to_obj>0.):
-        fraction_of_obj_pot = math.exp(-dist_to_obj/debye_length)
-        object_potential *= math.exp(-dist_to_obj/(pot_transp_elong*debye_length))
-        poisson_solve(grid, object_center_mask, ion_density-electron_density, debye_length, potential, \
-                          object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot))
+    if boltzmann_electrons:
+	potential = numpy.log(numpy.maximum(ion_density,numpy.exp(object_potential)*numpy.ones_like(ion_density))) # TODO: add electron temp. dep.
+	potential[0] = 0.
+	potential[-1] = 0.
     else:
-        fraction_of_obj_pot = 1.
-        poisson_solve(grid, object_mask, ion_density-electron_density, debye_length, potential, \
-                          object_potential=object_potential, object_transparency=0.)
+	if (dist_to_obj>0.):
+	    fraction_of_obj_pot = math.exp(-dist_to_obj/debye_length)
+	    object_potential *= math.exp(-dist_to_obj/(pot_transp_elong*debye_length))
+	    poisson_solve(grid, object_center_mask, ion_density-electron_density, debye_length, potential, \
+			      object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot))
+	else:
+	    fraction_of_obj_pot = 1.
+	    poisson_solve(grid, object_mask, ion_density-electron_density, debye_length, potential, \
+			      object_potential=object_potential, object_transparency=0.)
     if (k%storage_step==0 and mpi_id==0):
         times.append(t)
         copy = numpy.empty_like(object_mask)
@@ -257,9 +277,10 @@ for k in range(n_steps):
         copy = numpy.empty_like(ion_density)
         copy[:] = ion_density
         ion_densities.append(copy)
-        copy = numpy.empty_like(electron_density)
-        copy[:] = electron_density
-        electron_densities.append(copy)
+        if not boltzmann_electrons:
+	    copy = numpy.empty_like(electron_density)
+	    copy[:] = electron_density
+	    electron_densities.append(copy)
         copy = numpy.empty_like(potential)
         copy[:] = potential
         potentials.append(copy)
@@ -268,19 +289,22 @@ for k in range(n_steps):
     move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
 			   background_ion_density, largest_ion_index, ions, ion_density, \
 			   empty_ion_slots, current_empty_ion_slot)
-    move_particles(grid, object_mask, potential, dt, electron_charge_to_mass, \
+    if not boltzmann_electrons:
+	move_particles(grid, object_mask, potential, dt, electron_charge_to_mass, \
 			   background_electron_density, largest_electron_index, \
 			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot)
     expected_ion_injection = 2*dt*v_th_i/math.sqrt(2*math.pi)*n_ions/(z_max-z_min)
     n_ions_inject = int(expected_ion_injection)
-    expected_electron_injection = 2*dt*v_th_e/math.sqrt(2*math.pi)*n_electrons/(z_max-z_min)
-    n_electrons_inject = int(expected_electron_injection)
+    if not boltzmann_electrons:
+	expected_electron_injection = 2*dt*v_th_e/math.sqrt(2*math.pi)*n_electrons/(z_max-z_min)
+	n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
     if (expected_ion_injection-n_ions_inject)>numpy.random.rand(): n_ions_inject += 1
-    if (expected_ion_injection-n_electrons_inject)>numpy.random.rand(): n_electrons_inject += 1
     inject_particles(n_ions_inject, grid, dt, v_th_i, background_ion_density, ions, empty_ion_slots, \
 			     current_empty_ion_slot, largest_ion_index, ion_density)
-    inject_particles(n_electrons_inject, grid, dt, v_th_e, background_electron_density, electrons, empty_electron_slots, \
+    if not boltzmann_electrons:
+	if (expected_electron_injection-n_electrons_inject)>numpy.random.rand(): n_electrons_inject += 1
+	inject_particles(n_electrons_inject, grid, dt, v_th_e, background_electron_density, electrons, empty_electron_slots, \
 			     current_empty_electron_slot, largest_electron_index, electron_density)
     t += dt
 if (mpi_id==0):
@@ -295,7 +319,7 @@ if (mpi_id==0):
     potentials_np = numpy.array(potentials, dtype=numpy.float32)
     ion_densities_np = numpy.array(ion_densities, dtype=numpy.float32)
     electron_densities_np = numpy.array(electron_densities, dtype=numpy.float32)
-    filename_base = '/home/chaako/analysis/data/' + \
+    filename_base = \
 	'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
     print filename_base
     numpy.savez(filename_base, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
