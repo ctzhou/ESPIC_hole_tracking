@@ -11,6 +11,7 @@
 cimport cython
 import numpy as np
 cimport numpy as np
+import math
 
 #@cython.boundscheck(False) # turn of bounds-checking for this function (no speed-up seen)
 #@cython.wraparound(False) # turn of negative indices for this function (no speed-up seen)
@@ -138,14 +139,6 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     largest_index_list[0] = largest_index
     current_empty_slot_list[0] = current_empty_slot
 
-# <codecell>
-
-%%cython
-cimport cython
-import numpy as np
-cimport numpy as np
-import math
-
 def tridiagonal_solve(np.ndarray[np.float64_t,ndim=1] a, np.ndarray[np.float64_t,ndim=1] b, \
                           np.ndarray[np.float64_t,ndim=1] c, np.ndarray[np.float64_t,ndim=1] d, \
                           np.ndarray[np.float64_t,ndim=1] x): # also modifies b and d
@@ -247,7 +240,4 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
     cdef np.ndarray[np.float32_t,ndim=1] result_32 = result.astype(np.float32)
     for j in range(1,n_points-1):
         potential[j] = result_32[j-1]
-
-# <codecell>
-
 
