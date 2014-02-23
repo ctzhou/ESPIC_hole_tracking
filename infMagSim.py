@@ -3,46 +3,13 @@
 
 # <codecell>
 
-from IPython.parallel import Client
-
-# <codecell>
-
-rc = Client()
-dview = rc[:]
-dview.block = True
-n_engines = len(rc.ids)
-res = dview.push(dict(n_engines=n_engines))
-print n_engines
-
-# <codecell>
-
+%%px
 import IPython.core.display as IPdisp
-with dview.sync_imports():
-    import io
-    import math
-    import numpy
-    import matplotlib
-%px matplotlib.use('Agg') # non-GUI backend
-with dview.sync_imports():
-    import matplotlib.pyplot
-    from IPython.nbformat import current
-    from mpi4py import MPI
 
 # <codecell>
 
 %%px
-comm = MPI.COMM_WORLD
-mpi_id = comm.Get_rank() # not equal rc.ids...
-#print mpi_id
-
-# <codecell>
-
-mpi_ids = numpy.array(dview.pull('mpi_id'))
-master_rc_id = numpy.arange(0,len(mpi_ids))[mpi_ids==0][0]
-
-# <codecell>
-
-%%px
+from IPython.nbformat import current
 def execute_notebook(nbfile):
     with io.open(nbfile) as f:
         nb = current.read(f, 'json')
@@ -54,7 +21,26 @@ def execute_notebook(nbfile):
 
 # <codecell>
 
-%px execute_notebook('infMagSim_cython.ipynb')
+#####ScriptStart#####
+
+# <codecell>
+
+%%px
+from mpi4py import MPI
+import io
+import math
+import numpy
+import matplotlib
+matplotlib.use('Agg') # non-GUI backend
+import matplotlib.pyplot
+from infMagSim_cython import *
+
+# <codecell>
+
+%%px
+comm = MPI.COMM_WORLD
+mpi_id = comm.Get_rank()
+n_engines = comm.size
 
 # <codecell>
 
@@ -85,7 +71,7 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
         distance_to = (t-t_leave)*v_drift
     else:
         x = (t-t_center)*v_drift
-        width = math.sqrt(1-x*x) # Circular cross-section
+        width = math.sqrt(max(0,1-x*x)) # Circular cross-section
         distance_to = 0.
 #    if (distance_to>0. and enforce_bdy_cond_outside):
 #        width = eps
@@ -120,7 +106,7 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
 %%px
 z_min = -25.
 z_max = 25.
-n_cells = 1000
+n_cells = 10000
 n_points = n_cells+1
 dz = (z_max-z_min)/(n_points-1)
 eps = 1e-4
@@ -139,7 +125,7 @@ numpy.random.seed(seed)
 %%px
 v_th_i = 1
 v_d_i = 0
-n_ions = 1000000
+n_ions = 100000
 extra_storage_factor = 1.2
 background_ion_density = n_ions*n_engines/(z_max-z_min)
 n_bins = n_points;
@@ -165,13 +151,8 @@ if (mpi_id==0):
     fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
     for ax, data, bins in zip(axes,[ion_hist_n,ion_hist_v], [ion_hist_n_edges, ion_hist_v_edges]):
 	ax.step(bins,numpy.append(data,[0]), where='post')
-filename='figures/initialIonDistribution.png'
-matplotlib.pyplot.savefig(filename)
-
-# <codecell>
-
-filename = dview.pull('filename', targets=master_rc_id)
-IPdisp.Image(filename=filename)
+    filename='figures/initialIonDistribution.png'
+    matplotlib.pyplot.savefig(filename)
 
 # <codecell>
 
@@ -204,22 +185,17 @@ if (mpi_id==0):
     fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
     for ax, data, bins in zip(axes,[electron_hist_n,electron_hist_v], [electron_hist_n_edges, electron_hist_v_edges]):
 	ax.step(bins,numpy.append(data,[0]), where='post')
-filename='figures/initialElectronDistribution.png'
-matplotlib.pyplot.savefig(filename)
-
-# <codecell>
-
-filename = dview.pull('filename', targets=master_rc_id)
-IPdisp.Image(filename=filename)
+    filename='figures/initialElectronDistribution.png'
+    matplotlib.pyplot.savefig(filename)
 
 # <codecell>
 
 %%px
-v_drift = 0.5*v_th_i
-debye_length = 0.25
+v_drift = 0.125*v_th_i
+debye_length = 0.125
 pot_transp_elong = 2.
 object_radius = 1.
-t_object_center = (1.+2.*pot_transp_elong*debye_length)/v_drift
+t_object_center = (1.+4.*pot_transp_elong*debye_length)/v_drift
 t = 0.
 dt = 0.1*debye_length/v_th_e
 ion_charge_to_mass = 1
@@ -256,9 +232,9 @@ initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, larg
 # <codecell>
 
 %%px
-n_steps = 20
-storage_step = 1
-print_step = 1
+n_steps = 400000
+storage_step = 200
+print_step = 200
 for k in range(n_steps):
     comm.Allreduce(MPI.IN_PLACE, ion_density, op=MPI.SUM)
     comm.Allreduce(MPI.IN_PLACE, electron_density, op=MPI.SUM)
@@ -324,6 +300,28 @@ if (mpi_id==0):
     print filename_base
     numpy.savez(filename_base, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
 		    ion_densities=ion_densities_np, electron_densities=electron_densities_np)
+
+# <codecell>
+
+#####ScriptEnd#####
+
+# <codecell>
+
+from IPython.parallel import Client
+
+# <codecell>
+
+rc = Client()
+dview = rc[:]
+dview.block = True
+n_engines = len(rc.ids)
+res = dview.push(dict(n_engines=n_engines))
+print n_engines
+
+# <codecell>
+
+mpi_ids = numpy.array(dview.pull('mpi_id'))
+master_rc_id = numpy.arange(0,len(mpi_ids))[mpi_ids==0][0]
 
 # <codecell>
 

@@ -1,5 +1,9 @@
-all: infMagSim_cython.so
+infMagSim: infMagSim_script.py infMagSim_cython.so
 
+infMagSim_script.py: infMagSim.py
+	sed -n '/#####ScriptStart#####/,/#####ScriptEnd#####/p' infMagSim.py \
+		| grep -v '#####Script' | grep -v codecell | grep -v %%px \
+		> infMagSim_script.py
 
 infMagSim_cython.pyx: infMagSim_cython.py
 	grep -v 'utf-8' infMagSim_cython.py | grep -v nbformat | grep -v codecell \
