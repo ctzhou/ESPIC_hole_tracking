@@ -92,15 +92,14 @@ def initialize_mover(grid, object_mask, potential, dt, chage_to_mass, largest_in
     move_particles(grid, object_mask, potential, -dt/2, chage_to_mass, 1, largest_index, \
                        particles, density, np.empty(0,dtype=np.int), [-1], update_position=False)
 
-def draw_positive_velocities(n_draw,v_th,v_d=0):
+def draw_velocities(uniform_sample,v_th,v_d=0):
     if (v_d!=0):
         print 'drift not implemented'
-    return v_th*np.sqrt(-np.log(np.random.rand(n_draw).astype(np.float32))*2)
-
-#def draw_negative_velocities(n_draw,v_th,v_d=0):
-#    return -draw_positive_velocities(n_draw,v_th,v_d)
+    scaled_sample = 2.*uniform_sample-1.
+    return np.sign(scaled_sample)*v_th*np.sqrt(-np.log(np.fabs(scaled_sample))*2)
 
 def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float dt, float v_th, float background_density, \
+			 low_discrepancy_sequencer, \
                          np.ndarray[np.float32_t,ndim=2] particles, np.ndarray[np.int_t,ndim=1] empty_slots, \
                          current_empty_slot_list, largest_index_list, np.ndarray[np.float32_t, ndim=1] density):
     cdef int largest_index = largest_index_list[0]
@@ -112,16 +111,18 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef float dz = grid[1]-grid[0]
     cdef float fraction_to_left
     cdef int left_index
-    cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*np.random.rand(n_inject).astype(np.float32)
-    cdef np.ndarray[np.float32_t,ndim=1] velocity_sign = np.sign(np.random.rand(n_inject).astype(np.float32)-0.5)
-    cdef np.ndarray[np.float32_t,ndim=1] positive_velocities = draw_positive_velocities(n_inject,v_th)
+    #cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*np.random.rand(n_inject).astype(np.float32)
+    #cdef np.ndarray[np.float32_t,ndim=1] velocities = draw_velocities(np.random.rand(n_inject).astype(np.float32),v_th)
+    uniform_2d_sample = np.asarray(low_discrepancy_sequencer.get(n_inject),dtype=np.float32).T
+    cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*uniform_2d_sample[0]
+    cdef np.ndarray[np.float32_t,ndim=1] velocities = draw_velocities(uniform_2d_sample[1],v_th)
     cdef int l,i
     for l in range(n_inject):
         if current_empty_slot<0:
             print 'no empty slots'
         i = empty_slots[current_empty_slot]
-        particles[1,i] = velocity_sign[l]*positive_velocities[l]
-        if (velocity_sign[l]<0):
+        particles[1,i] = velocities[l]
+        if (velocities[l]<0):
             particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
         else:
             particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
