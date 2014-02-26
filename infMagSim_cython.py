@@ -99,7 +99,7 @@ def draw_velocities(uniform_sample,v_th,v_d=0):
     return np.sign(scaled_sample)*v_th*np.sqrt(-np.log(np.fabs(scaled_sample))*2)
 
 def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float dt, float v_th, float background_density, \
-			 low_discrepancy_sequencer, \
+                         low_discrepancy_sequencer, \
                          np.ndarray[np.float32_t,ndim=2] particles, np.ndarray[np.int_t,ndim=1] empty_slots, \
                          current_empty_slot_list, largest_index_list, np.ndarray[np.float32_t, ndim=1] density):
     cdef int largest_index = largest_index_list[0]
@@ -117,26 +117,27 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*uniform_2d_sample[0]
     cdef np.ndarray[np.float32_t,ndim=1] velocities = draw_velocities(uniform_2d_sample[1],v_th)
     cdef int l,i
-    for l in range(n_inject):
-        if current_empty_slot<0:
-            print 'no empty slots'
-        i = empty_slots[current_empty_slot]
-        particles[1,i] = velocities[l]
-        if (velocities[l]<0):
-            particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
-        else:
-            particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
-        if (empty_slots[current_empty_slot]>largest_index):
-            largest_index = empty_slots[current_empty_slot]
-        left_index = int((particles[0,i]-z_min)/dz)
-        if (left_index<0 or left_index>n_points-2):
-            print 'bad left_index:', left_index, z_min, particles[0,i], z_max, particles[1,i], partial_dt[l]
-        else:
-            fraction_to_left = ( particles[0,i] % dz )/dz
-            density[left_index] += fraction_to_left/background_density
-            density[left_index+1] += (1-fraction_to_left)/background_density
-            empty_slots[current_empty_slot] = -1
-            current_empty_slot -= 1
+    for velocity_sign in [-1.,1.]:
+        for l in range(n_inject):
+            if current_empty_slot<0:
+                print 'no empty slots'
+            i = empty_slots[current_empty_slot]
+            particles[1,i] = velocity_sign*np.fabs(velocities[l])
+            if (velocity_sign<0.):
+                particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
+            else:
+                particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
+            if (empty_slots[current_empty_slot]>largest_index):
+                largest_index = empty_slots[current_empty_slot]
+            left_index = int((particles[0,i]-z_min)/dz)
+            if (left_index<0 or left_index>n_points-2):
+                print 'bad left_index:', left_index, z_min, particles[0,i], z_max, particles[1,i], partial_dt[l]
+            else:
+                fraction_to_left = ( particles[0,i] % dz )/dz
+                density[left_index] += fraction_to_left/background_density
+                density[left_index+1] += (1-fraction_to_left)/background_density
+                empty_slots[current_empty_slot] = -1
+                current_empty_slot -= 1
     largest_index_list[0] = largest_index
     current_empty_slot_list[0] = current_empty_slot
 

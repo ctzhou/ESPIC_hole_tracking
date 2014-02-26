@@ -54,6 +54,7 @@ n_engines = comm.size
 
 # <codecell>
 
+%%px
 boltzmann_electrons = False
 quasineutral = False
 if quasineutral:
@@ -224,6 +225,27 @@ if not boltzmann_electrons:
 # <codecell>
 
 %%px
+for point, j in zip(grid, range(1+0*n_cells)):
+    ion_in_cell = numpy.logical_and(point<ions[0][:],ions[0][:]<=point+dz)
+    ions_in_cell = ions.T[ion_in_cell]
+    ions_in_cell = ions_in_cell.T
+    average_ion_velocity_in_cell = numpy.average(ions_in_cell[1])
+    electron_in_cell = numpy.logical_and(point<electrons[0][:],electrons[0][:]<=point+dz)
+    electrons_in_cell = electrons.T[electron_in_cell]
+    electrons_in_cell = electrons_in_cell.T
+    average_electron_velocity_in_cell = numpy.average(electrons_in_cell[1])
+    mpi_writeable = numpy.zeros(1)
+    comm.Allreduce(average_ion_velocity_in_cell, mpi_writeable, op=MPI.SUM)
+    average_ion_velocity_in_cell = mpi_writeable[0]/n_engines
+    mpi_writeable = numpy.zeros(1)
+    comm.Allreduce(average_electron_velocity_in_cell, mpi_writeable, op=MPI.SUM)
+    average_electron_velocity_in_cell = mpi_writeable[0]/n_engines
+    ions[1][ion_in_cell] -= average_ion_velocity_in_cell
+    electrons[1][electron_in_cell] -= average_electron_velocity_in_cell
+
+# <codecell>
+
+%%px
 v_drift = 0.125*v_th_i
 if quasineutral:
     debye_length = dz
@@ -325,10 +347,10 @@ for k in range(n_steps):
 	move_particles(grid, object_mask, potential, dt, electron_charge_to_mass, \
 			   background_electron_density, largest_electron_index, \
 			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot)
-    expected_ion_injection = 2*dt*v_th_i/math.sqrt(2*math.pi)*n_ions/(z_max-z_min)
+    expected_ion_injection = 2*dt*v_th_i/math.sqrt(2*math.pi)*n_ions/(z_max-z_min)/2.
     n_ions_inject = int(expected_ion_injection)
     if not boltzmann_electrons:
-	expected_electron_injection = 2*dt*v_th_e/math.sqrt(2*math.pi)*n_electrons/(z_max-z_min)
+	expected_electron_injection = 2*dt*v_th_e/math.sqrt(2*math.pi)*n_electrons/(z_max-z_min)/2.
 	n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
     if (expected_ion_injection-n_ions_inject)>numpy.random.rand():
