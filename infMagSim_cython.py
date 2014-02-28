@@ -7,11 +7,13 @@
 
 # <codecell>
 
-%%cython
+%%cython -lgsl
 cimport cython
 import numpy as np
 cimport numpy as np
 import math
+import cython_gsl as gsl
+cimport cython_gsl as gsl
 
 #@cython.boundscheck(False) # turn of bounds-checking for this function (no speed-up seen)
 #@cython.wraparound(False) # turn of negative indices for this function (no speed-up seen)
@@ -99,7 +101,7 @@ def draw_velocities(uniform_sample,v_th,v_d=0):
     return np.sign(scaled_sample)*v_th*np.sqrt(-np.log(np.fabs(scaled_sample))*2)
 
 def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float dt, float v_th, float background_density, \
-                         low_discrepancy_sequencer, \
+                         uniform_2d_sampler, \
                          np.ndarray[np.float32_t,ndim=2] particles, np.ndarray[np.int_t,ndim=1] empty_slots, \
                          current_empty_slot_list, largest_index_list, np.ndarray[np.float32_t, ndim=1] density):
     cdef int largest_index = largest_index_list[0]
@@ -113,31 +115,33 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef int left_index
     #cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*np.random.rand(n_inject).astype(np.float32)
     #cdef np.ndarray[np.float32_t,ndim=1] velocities = draw_velocities(np.random.rand(n_inject).astype(np.float32),v_th)
-    uniform_2d_sample = np.asarray(low_discrepancy_sequencer.get(n_inject),dtype=np.float32).T
+    uniform_2d_sample = uniform_2d_sampler.get(n_inject).astype(np.float32).T
     cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*uniform_2d_sample[0]
     cdef np.ndarray[np.float32_t,ndim=1] velocities = draw_velocities(uniform_2d_sample[1],v_th)
     cdef int l,i
-    for velocity_sign in [-1.,1.]:
-        for l in range(n_inject):
-            if current_empty_slot<0:
-                print 'no empty slots'
-            i = empty_slots[current_empty_slot]
-            particles[1,i] = velocity_sign*np.fabs(velocities[l])
-            if (velocity_sign<0.):
-                particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
-            else:
-                particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
-            if (empty_slots[current_empty_slot]>largest_index):
-                largest_index = empty_slots[current_empty_slot]
-            left_index = int((particles[0,i]-z_min)/dz)
-            if (left_index<0 or left_index>n_points-2):
-                print 'bad left_index:', left_index, z_min, particles[0,i], z_max, particles[1,i], partial_dt[l]
-            else:
-                fraction_to_left = ( particles[0,i] % dz )/dz
-                density[left_index] += fraction_to_left/background_density
-                density[left_index+1] += (1-fraction_to_left)/background_density
-                empty_slots[current_empty_slot] = -1
-                current_empty_slot -= 1
+    #for velocity_sign in [-1.,1.]:
+    for l in range(n_inject):
+        if current_empty_slot<0:
+            print 'no empty slots'
+        i = empty_slots[current_empty_slot]
+        #particles[1,i] = velocity_sign*np.fabs(velocities[l])
+        #if (velocity_sign<0.):
+        particles[1,i] = velocities[l]
+        if (velocities[l]<0.):
+            particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
+        else:
+            particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
+        if (empty_slots[current_empty_slot]>largest_index):
+            largest_index = empty_slots[current_empty_slot]
+        left_index = int((particles[0,i]-z_min)/dz)
+        if (left_index<0 or left_index>n_points-2):
+            print 'bad left_index:', left_index, z_min, particles[0,i], z_max, particles[1,i], partial_dt[l]
+        else:
+            fraction_to_left = ( particles[0,i] % dz )/dz
+            density[left_index] += fraction_to_left/background_density
+            density[left_index+1] += (1-fraction_to_left)/background_density
+            empty_slots[current_empty_slot] = -1
+            current_empty_slot -= 1
     largest_index_list[0] = largest_index
     current_empty_slot_list[0] = current_empty_slot
 
@@ -242,4 +246,22 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
     cdef np.ndarray[np.float32_t,ndim=1] result_32 = result.astype(np.float32)
     for j in range(1,n_points-1):
         potential[j] = result_32[j-1]
+
+cdef class sobol_sequencer:
+    cdef gsl.gsl_qrng *quasi_random_generator
+    cdef int rand_dim
+    def __init__(self, int rand_dim=1):
+        self.rand_dim = rand_dim
+        #cdef gsl.gsl_qrng_type *generator_type = gsl.gsl_qrng_sobol
+        cdef gsl.gsl_qrng_type *generator_type = gsl.gsl_qrng_niederreiter_2
+        self.quasi_random_generator = gsl.gsl_qrng_alloc(generator_type, self.rand_dim)
+    def get(self,n):
+        cdef np.ndarray[np.float64_t,ndim=1] next_values = np.empty(self.rand_dim, dtype=np.float64)
+        cdef np.ndarray[np.float64_t,ndim=2] sequence = np.empty([n,self.rand_dim], dtype=np.float64)
+        cdef int i,j
+        for i in range(n):
+            gsl.gsl_qrng_get(self.quasi_random_generator, <double *> next_values.data)
+            for j in range(self.rand_dim):
+                sequence[i][j] = next_values[j]
+        return sequence
 

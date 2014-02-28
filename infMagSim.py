@@ -136,8 +136,25 @@ if (mpi_id==0):
 
 %%px
 seed = 384+mpi_id*mpi_id*mpi_id
-numpy.random.seed(seed)
-low_discrepancy_sequencer = ghalton.GeneralizedHalton(2) # seed doesn't appear to do anything
+class uniform_2d_sampler_class:
+    def __init__(self,seed,low_discrepancy=False,shared_seed=True,rand_dim=1):
+	self.low_discrepancy = low_discrepancy
+	self.shared_seed = shared_seed
+	self.rand_dim = rand_dim
+	if low_discrepancy:
+	    self.low_discrepancy = True
+	    #self.sequencer = ghalton.GeneralizedHalton(rand_dim,seed) # seed doesn't appear to do anything
+	    self.sequencer = sobol_sequencer(rand_dim=rand_dim)
+	else:
+	    self.low_discrepancy = False
+	    numpy.random.seed(seed)
+    def get(self,n):
+	if self.low_discrepancy:
+	    return numpy.asarray(self.sequencer.get(n))
+	else:
+	    return numpy.random.rand(n,self.rand_dim)
+uniform_2d_sampler = uniform_2d_sampler_class(seed,shared_seed=False,rand_dim=2)
+#uniform_2d_sampler = uniform_2d_sampler_class(seed,low_discrepancy=True,rand_dim=2)
 
 # <codecell>
 
@@ -157,11 +174,13 @@ ion_storage_length = int(extra_storage_factor*n_ions)
 ions = numpy.zeros([2,ion_storage_length],dtype=numpy.float32)
 #ions[0][0:n_ions] = numpy.random.rand(n_ions)*(z_max-z_min) + z_min # positions
 #ions[1][0:n_ions] = numpy.random.randn(n_ions)*v_th_i + v_d_i # velocities
-for id in range(n_engines):
-    sample = numpy.asarray(low_discrepancy_sequencer.get(n_ions)).T
-    if id==mpi_id:
-	uniform_2d_sample = sample
-#print uniform_2d_sample[0][0:10]
+if uniform_2d_sampler.shared_seed:
+    for id in range(n_engines):
+	sample = numpy.asarray(uniform_2d_sampler.get(n_ions)).T
+	if id==mpi_id:
+	    uniform_2d_sample = sample
+else:
+    uniform_2d_sample = uniform_2d_sampler.get(n_ions).T
 ions[0][0:n_ions] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
 ions[1][0:n_ions] = norm.ppf(uniform_2d_sample[1])*v_th_i + v_d_i # velocities
 #ions[2][0:n_ions] = numpy.ones(n_ions,dtype=numpy.float32) # relative weights
@@ -200,10 +219,13 @@ if not boltzmann_electrons:
     electrons = numpy.zeros([2,electron_storage_length],dtype=numpy.float32)
     #electrons[0][0:n_electrons] = numpy.random.rand(n_electrons)*(z_max-z_min) + z_min # positions
     #electrons[1][0:n_electrons] = numpy.random.randn(n_electrons)*v_th_e + v_d_e # velocities
-    for id in range(n_engines):
-	sample = numpy.asarray(low_discrepancy_sequencer.get(n_electrons)).T
-	if id==mpi_id:
-	    uniform_2d_sample = sample
+    if uniform_2d_sampler.shared_seed:
+	for id in range(n_engines):
+	    sample = numpy.asarray(uniform_2d_sampler.get(n_electrons)).T
+	    if id==mpi_id:
+		uniform_2d_sample = sample
+    else:
+	uniform_2d_sample = uniform_2d_sampler.get(n_electrons).T
     electrons[0][0:n_electrons] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
     electrons[1][0:n_electrons] = norm.ppf(uniform_2d_sample[1])*v_th_e + v_d_e # velocities
     #electrons[2][0:n_electrons] = numpy.ones(n_ions,dtype=numpy.float32) # relative weights
@@ -224,24 +246,24 @@ if not boltzmann_electrons:
 
 # <codecell>
 
-%%px
-for point, j in zip(grid, range(1+0*n_cells)):
-    ion_in_cell = numpy.logical_and(point<ions[0][:],ions[0][:]<=point+dz)
-    ions_in_cell = ions.T[ion_in_cell]
-    ions_in_cell = ions_in_cell.T
-    average_ion_velocity_in_cell = numpy.average(ions_in_cell[1])
-    electron_in_cell = numpy.logical_and(point<electrons[0][:],electrons[0][:]<=point+dz)
-    electrons_in_cell = electrons.T[electron_in_cell]
-    electrons_in_cell = electrons_in_cell.T
-    average_electron_velocity_in_cell = numpy.average(electrons_in_cell[1])
-    mpi_writeable = numpy.zeros(1)
-    comm.Allreduce(average_ion_velocity_in_cell, mpi_writeable, op=MPI.SUM)
-    average_ion_velocity_in_cell = mpi_writeable[0]/n_engines
-    mpi_writeable = numpy.zeros(1)
-    comm.Allreduce(average_electron_velocity_in_cell, mpi_writeable, op=MPI.SUM)
-    average_electron_velocity_in_cell = mpi_writeable[0]/n_engines
-    ions[1][ion_in_cell] -= average_ion_velocity_in_cell
-    electrons[1][electron_in_cell] -= average_electron_velocity_in_cell
+#%%px
+#for point, j in zip(grid, range(1+0*n_cells)):
+#    ion_in_cell = numpy.logical_and(point<ions[0][:],ions[0][:]<=point+dz)
+#    ions_in_cell = ions.T[ion_in_cell]
+#    ions_in_cell = ions_in_cell.T
+#    average_ion_velocity_in_cell = numpy.average(ions_in_cell[1])
+#    electron_in_cell = numpy.logical_and(point<electrons[0][:],electrons[0][:]<=point+dz)
+#    electrons_in_cell = electrons.T[electron_in_cell]
+#    electrons_in_cell = electrons_in_cell.T
+#    average_electron_velocity_in_cell = numpy.average(electrons_in_cell[1])
+#    mpi_writeable = numpy.zeros(1)
+#    comm.Allreduce(average_ion_velocity_in_cell, mpi_writeable, op=MPI.SUM)
+#    average_ion_velocity_in_cell = mpi_writeable[0]/n_engines
+#    mpi_writeable = numpy.zeros(1)
+#    comm.Allreduce(average_electron_velocity_in_cell, mpi_writeable, op=MPI.SUM)
+#    average_electron_velocity_in_cell = mpi_writeable[0]/n_engines
+#    ions[1][ion_in_cell] -= average_ion_velocity_in_cell
+#    electrons[1][electron_in_cell] -= average_electron_velocity_in_cell
 
 # <codecell>
 
@@ -347,10 +369,10 @@ for k in range(n_steps):
 	move_particles(grid, object_mask, potential, dt, electron_charge_to_mass, \
 			   background_electron_density, largest_electron_index, \
 			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot)
-    expected_ion_injection = 2*dt*v_th_i/math.sqrt(2*math.pi)*n_ions/(z_max-z_min)/2.
+    expected_ion_injection = 2*dt*v_th_i/math.sqrt(2*math.pi)*n_ions/(z_max-z_min)
     n_ions_inject = int(expected_ion_injection)
     if not boltzmann_electrons:
-	expected_electron_injection = 2*dt*v_th_e/math.sqrt(2*math.pi)*n_electrons/(z_max-z_min)/2.
+	expected_electron_injection = 2*dt*v_th_e/math.sqrt(2*math.pi)*n_electrons/(z_max-z_min)
 	n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
     if (expected_ion_injection-n_ions_inject)>numpy.random.rand():
@@ -358,30 +380,32 @@ for k in range(n_steps):
     injection_numbers = numpy.zeros(n_engines,dtype=np.int32)
     injection_numbers[mpi_id] = n_ions_inject
     comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
-    for injection_number in injection_numbers[:mpi_id]:
-	sample = numpy.asarray(low_discrepancy_sequencer.get(int(injection_number))).T
+    if uniform_2d_sampler.shared_seed:
+	for injection_number in injection_numbers[:mpi_id]:
+	    sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
     if n_ions_inject>0:
 	inject_particles(n_ions_inject, grid, dt, v_th_i, background_ion_density, \
-			     low_discrepancy_sequencer, ions, empty_ion_slots, \
+			     uniform_2d_sampler, ions, empty_ion_slots, \
 			     current_empty_ion_slot, largest_ion_index, ion_density)
-    for injection_number in injection_numbers[mpi_id+1:]:
-	sample = numpy.asarray(low_discrepancy_sequencer.get(int(injection_number))).T
+    if uniform_2d_sampler.shared_seed:
+	for injection_number in injection_numbers[mpi_id+1:]:
+	    sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
     if not boltzmann_electrons:
 	if (expected_electron_injection-n_electrons_inject)>numpy.random.rand():
 	    n_electrons_inject += 1
 	injection_numbers = numpy.zeros(n_engines,dtype=np.int32)
 	injection_numbers[mpi_id] = n_electrons_inject
 	comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
-	for injection_number in injection_numbers[:mpi_id]:
-	    sample = numpy.asarray(low_discrepancy_sequencer.get(int(injection_number))).T
-	for id in range(mpi_id):
-	    sample = numpy.asarray(low_discrepancy_sequencer.get(int(expected_electron_injection+1))).T
+	if uniform_2d_sampler.shared_seed:
+	    for injection_number in injection_numbers[:mpi_id]:
+		sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
 	if n_electrons_inject>0:
 	    inject_particles(n_electrons_inject, grid, dt, v_th_e, background_electron_density, \
-				 low_discrepancy_sequencer, electrons, empty_electron_slots, \
+				 uniform_2d_sampler, electrons, empty_electron_slots, \
 				 current_empty_electron_slot, largest_electron_index, electron_density)
-	for injection_number in injection_numbers[mpi_id+1:]:
-	    sample = numpy.asarray(low_discrepancy_sequencer.get(int(injection_number))).T
+	if uniform_2d_sampler.shared_seed:
+	    for injection_number in injection_numbers[mpi_id+1:]:
+		sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
     t += dt
 if (mpi_id==0):
     print times[0], dt, times[len(times)-1]
