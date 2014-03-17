@@ -59,6 +59,8 @@ boltzmann_electrons = False
 quasineutral = False
 if quasineutral:
     boltzmann_electrons = True
+use_quasirandom_numbers = False
+include_object = True
 
 # <codecell>
 
@@ -153,8 +155,10 @@ class uniform_2d_sampler_class:
 	    return numpy.asarray(self.sequencer.get(n))
 	else:
 	    return numpy.random.rand(n,self.rand_dim)
-uniform_2d_sampler = uniform_2d_sampler_class(seed,shared_seed=False,rand_dim=2)
-#uniform_2d_sampler = uniform_2d_sampler_class(seed,low_discrepancy=True,rand_dim=2)
+if use_quasirandom_numbers:
+    uniform_2d_sampler = uniform_2d_sampler_class(seed,low_discrepancy=True,rand_dim=2)
+else:
+    uniform_2d_sampler = uniform_2d_sampler_class(seed,shared_seed=False,rand_dim=2)
 
 # <codecell>
 
@@ -290,7 +294,8 @@ if (mpi_id==0):
 %%px
 object_mask = numpy.zeros_like(grid) # Could make 1 shorter
 object_center_mask = numpy.zeros_like(grid) # Could make 1 shorter
-circular_cross_section(grid,1.e-8,1.,1.,1.,object_center_mask)
+if include_object:
+    circular_cross_section(grid,1.e-8,1.,1.,1.,object_center_mask)
 potential = numpy.zeros_like(grid)
 
 if (mpi_id==0):
@@ -298,6 +303,7 @@ if (mpi_id==0):
     potentials = []
     ion_densities = []
     electron_densities = []
+    charge_derivatives = []
     times = []
 
 # <codecell>
@@ -306,6 +312,9 @@ if (mpi_id==0):
 ion_density = numpy.zeros_like(grid)
 accumulate_density(grid, object_mask, background_ion_density, largest_ion_index, ions, ion_density)
 electron_density = numpy.zeros_like(grid)
+charge_density = numpy.zeros_like(grid)
+previous_charge_density = numpy.zeros_like(grid)
+charge_derivative = numpy.zeros_like(grid)
 if not boltzmann_electrons:
     accumulate_density(grid, object_mask, background_electron_density, largest_electron_index, electrons, electron_density)
 
@@ -320,6 +329,8 @@ if not boltzmann_electrons:
 n_steps = 1000
 storage_step = 1
 print_step = 100
+damping_start_step = 1 # don't make zero to avoid large initial derivative
+damping_end_step = 0 # make <= damping_start_step to disable damping
 for k in range(n_steps):
     comm.Allreduce(MPI.IN_PLACE, ion_density, op=MPI.SUM)
     ion_density[0] *= 2. # half-cell at ends
@@ -330,7 +341,10 @@ for k in range(n_steps):
 	comm.Allreduce(MPI.IN_PLACE, electron_density, op=MPI.SUM)
 	electron_density[0] *= 2. # half-cell at ends
 	electron_density[-1] *= 2. # half-cell at ends
-    dist_to_obj = circular_cross_section(grid, t, t_object_center, v_drift, object_radius, object_mask)
+    if include_object:
+	dist_to_obj = circular_cross_section(grid, t, t_object_center, v_drift, object_radius, object_mask)
+    else:
+	dist_to_obj = 100.
     object_potential = -3.
     if quasineutral:
 	potential = numpy.log(numpy.maximum(ion_density,numpy.exp(object_potential)*numpy.ones_like(ion_density))) # TODO: add electron temp. dep.
@@ -338,10 +352,21 @@ for k in range(n_steps):
 	potential[-1] = 0.
     else:
 	if (dist_to_obj>0.):
-	    fraction_of_obj_pot = math.exp(-dist_to_obj/debye_length)
+	    if include_object:
+		fraction_of_obj_pot = math.exp(-dist_to_obj/debye_length)
+	    else:
+		fraction_of_obj_pot = 0.
 	    object_potential *= math.exp(-dist_to_obj/(pot_transp_elong*debye_length))
-	    poisson_solve(grid, object_center_mask, ion_density-electron_density, debye_length, potential, \
+	    if k>=damping_start_step and k<damping_end_step:
+		damping_factor = dt/2.
+	    else:
+		damping_factor = 0.
+	    charge_density = ion_density-electron_density
+	    charge_derivative = (charge_density-previous_charge_density)/dt
+	    poisson_solve(grid, object_center_mask, charge_density+damping_factor*charge_derivative, \
+			      debye_length, potential, \
 			      object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot))
+	    previous_charge_density = charge_density
 	else:
 	    fraction_of_obj_pot = 1.
 	    poisson_solve(grid, object_mask, ion_density-electron_density, debye_length, potential, \
@@ -357,6 +382,9 @@ for k in range(n_steps):
 	copy = numpy.empty_like(electron_density)
 	copy[:] = electron_density
 	electron_densities.append(copy)
+	copy = numpy.empty_like(charge_derivative)
+	copy[:] = charge_derivative
+	charge_derivatives.append(copy)
         copy = numpy.empty_like(potential)
         copy[:] = potential
         potentials.append(copy)
@@ -419,11 +447,12 @@ if (mpi_id==0):
     potentials_np = numpy.array(potentials, dtype=numpy.float32)
     ion_densities_np = numpy.array(ion_densities, dtype=numpy.float32)
     electron_densities_np = numpy.array(electron_densities, dtype=numpy.float32)
+    charge_derivatives_np = numpy.array(charge_derivatives, dtype=numpy.float32)
     filename_base = \
 	'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
     print filename_base
     numpy.savez(filename_base, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
-		    ion_densities=ion_densities_np, electron_densities=electron_densities_np)
+		    ion_densities=ion_densities_np, electron_densities=electron_densities_np, charge_derivatives=charge_derivatives_np)
 
 # <codecell>
 
