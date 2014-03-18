@@ -175,6 +175,8 @@ n_ions = 100000
 extra_storage_factor = 1.2
 background_ion_density = n_ions*n_engines*dz/(z_max-z_min)
 n_bins = n_points
+v_max_i = 4.*v_th_i
+v_min_i = -v_max_i
 inactive_slot_position_flag = 2*z_max
 
 # <codecell>
@@ -201,8 +203,10 @@ ions[0][n_ions:] = inactive_slot_position_flag
 empty_ion_slots = -numpy.ones(ion_storage_length,dtype=numpy.int)
 current_empty_ion_slot = [(ion_storage_length-n_ions)-1]
 empty_ion_slots[0:(current_empty_ion_slot[0]+1)] = range(ion_storage_length-1,n_ions-1,-1)
-ion_hist_n, ion_hist_n_edges = numpy.histogram(ions[0][0:n_ions], bins=n_bins)
-ion_hist_v, ion_hist_v_edges = numpy.histogram(ions[1][0:n_ions], bins=n_bins)
+ion_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+ion_hist_v_edges = np.arange(v_min_i,v_max_i+eps,(v_max_i-v_min_i)/n_bins)
+ion_hist_n, ion_hist_n_edges = numpy.histogram(ions[0][0:n_ions], bins=ion_hist_n_edges)
+ion_hist_v, ion_hist_v_edges = numpy.histogram(ions[1][0:n_ions], bins=ion_hist_v_edges)
 comm.Allreduce(MPI.IN_PLACE, ion_hist_n, op=MPI.SUM)
 comm.Allreduce(MPI.IN_PLACE, ion_hist_v, op=MPI.SUM)
 if (mpi_id==0):
@@ -222,6 +226,8 @@ if not boltzmann_electrons:
     v_d_e = 0.
     background_electron_density = n_electrons*n_engines*dz/(z_max-z_min)
     n_bins = n_points;
+    v_max_e = 4.*v_th_e
+    v_min_e = -v_max_e
 
 # <codecell>
 
@@ -248,8 +254,10 @@ if not boltzmann_electrons:
     empty_electron_slots = -numpy.ones(electron_storage_length,dtype=numpy.int)
     current_empty_electron_slot = [(electron_storage_length-n_electrons)-1]
     empty_electron_slots[0:(current_empty_electron_slot[0]+1)] = range(electron_storage_length-1,n_electrons-1,-1)
-    electron_hist_n, electron_hist_n_edges = numpy.histogram(electrons[0][0:n_electrons], bins=n_bins)
-    electron_hist_v, electron_hist_v_edges = numpy.histogram(electrons[1][0:n_electrons], bins=n_bins)
+    electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+    electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
+    electron_hist_n, electron_hist_n_edges = numpy.histogram(electrons[0][0:n_electrons], bins=electron_hist_n_edges)
+    electron_hist_v, electron_hist_v_edges = numpy.histogram(electrons[1][0:n_electrons], bins=electron_hist_v_edges)
     comm.Allreduce(MPI.IN_PLACE, electron_hist_n, op=MPI.SUM)
     comm.Allreduce(MPI.IN_PLACE, electron_hist_v, op=MPI.SUM)
     if (mpi_id==0):
@@ -316,6 +324,8 @@ if (mpi_id==0):
     electron_densities = []
     charge_derivatives = []
     times = []
+    ion_distribution_functions = []
+    electron_distribution_functions = []
 
 # <codecell>
 
@@ -394,6 +404,27 @@ for k in range(n_steps):
 	    fraction_of_obj_pot = 1.
 	    poisson_solve(grid, object_mask, ion_density-electron_density, debye_length, potential, \
 			      object_potential=object_potential, object_transparency=0.)
+    if (k%storage_step==0):
+	    occupied_ion_slots = (ions[0]==ions[0])
+	    occupied_ion_slots[empty_ion_slots[0:current_empty_ion_slot[0]+1]] = False
+	    n_bins = 100
+	    ion_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+	    ion_hist_v_edges = np.arange(v_min_i,v_max_i+eps,(v_max_i-v_min_i)/n_bins)
+	    ion_hist2d, ion_hist_n_edges, ion_hist_v_edges = \
+		numpy.histogram2d(ions[0][occupied_ion_slots], ions[1][occupied_ion_slots], \
+				      bins=[ion_hist_n_edges,ion_hist_v_edges]) # could use range=[[z_min,z_max],[v_min,v_max]]
+	    ion_hist2d = np.ascontiguousarray(ion_hist2d)
+	    comm.Allreduce(MPI.IN_PLACE, ion_hist2d, op=MPI.SUM)
+	    occupied_electron_slots = (electrons[0]==electrons[0])
+	    occupied_electron_slots[empty_electron_slots[0:current_empty_electron_slot[0]+1]] = False
+	    n_bins = 100
+	    electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+	    electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
+	    electron_hist2d, electron_hist_n_edges, electron_hist_v_edges = \
+		numpy.histogram2d(electrons[0][occupied_electron_slots], electrons[1][occupied_electron_slots], \
+				      bins=[electron_hist_n_edges,electron_hist_v_edges]) # could use range=[[z_min,z_max],[v_min,v_max]]
+	    electron_hist2d = np.ascontiguousarray(electron_hist2d)
+	    comm.Allreduce(MPI.IN_PLACE, electron_hist2d, op=MPI.SUM)
     if (k%storage_step==0 and mpi_id==0):
         times.append(t)
         copy = numpy.empty_like(object_mask)
@@ -411,6 +442,12 @@ for k in range(n_steps):
         copy = numpy.empty_like(potential)
         copy[:] = potential
         potentials.append(copy)
+        copy = numpy.empty_like(ion_hist2d)
+        copy[:] = ion_hist2d
+        ion_distribution_functions.append(copy)
+        copy = numpy.empty_like(electron_hist2d)
+        copy[:] = electron_hist2d
+        electron_distribution_functions.append(copy)
     if (k%print_step==0 and mpi_id==0):
 	print k
     move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
@@ -472,11 +509,18 @@ if (mpi_id==0):
     ion_densities_np = numpy.array(ion_densities, dtype=numpy.float32)
     electron_densities_np = numpy.array(electron_densities, dtype=numpy.float32)
     charge_derivatives_np = numpy.array(charge_derivatives, dtype=numpy.float32)
+    ion_distribution_functions_np = numpy.array(ion_distribution_functions, dtype=numpy.float32) # actuall int
+    electron_distribution_functions_np = numpy.array(electron_distribution_functions, dtype=numpy.float32) # actuall int
     filename_base = \
 	'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
     print filename_base
     numpy.savez(filename_base, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
-		    ion_densities=ion_densities_np, electron_densities=electron_densities_np, charge_derivatives=charge_derivatives_np)
+		    ion_densities=ion_densities_np, electron_densities=electron_densities_np, charge_derivatives=charge_derivatives_np, \
+		    ion_hist_n_edges=ion_hist_n_edges, ion_hist_v_edges=ion_hist_v_edges, \
+		    ion_distribution_functions=ion_distribution_functions_np, \
+		    electron_hist_n_edges=electron_hist_n_edges, electron_hist_v_edges=electron_hist_v_edges, \
+		    electron_distribution_functions=electron_distribution_functions_np, \
+		    background_ion_density=background_ion_density, background_electron_density=background_electron_density)
 
 # <codecell>
 
