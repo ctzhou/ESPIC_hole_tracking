@@ -22,7 +22,7 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                        float dt, float charge_to_mass, float background_density, largest_index_list, \
                        np.ndarray[np.float32_t, ndim=2] particles, np.ndarray[np.float32_t, ndim=1] density, \
                        np.ndarray[np.int_t, ndim=1] empty_slots, \
-                       current_empty_slot_list, int update_position=True, float potential_threshold=-3.):
+                       current_empty_slot_list, int update_position=True, int periodic_particles=False):
     cdef int largest_index = largest_index_list[0]
     cdef int current_empty_slot = current_empty_slot_list[0]
     cdef int largest_allowed_slot = len(empty_slots)-1
@@ -32,6 +32,7 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
     cdef float z_min = grid[0]
     cdef float z_max = grid[n_points-1]
     cdef float dz = grid[1]-grid[0]
+    cdef float inactive_slot_position_flag = 2*z_max
     cdef float eps=1.e-5
     cdef int j, object_index
     for j in range(n_points):
@@ -44,9 +45,15 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
     cdef float current_potential=0.
     cdef int i
     for i in range(largest_index):
-        within_bounds = (particles[0,i]>z_min+eps and particles[0,i]<z_max-eps)
+        if periodic_particles:
+            within_bounds = particles[0,i]<0.99*inactive_slot_position_flag
+            particles[0,i] = (particles[0,i]-z_min) % (z_max-z_min) + z_min
+        else:
+            within_bounds = (particles[0,i]>z_min+eps and particles[0,i]<z_max-eps)
         if (within_bounds):
             left_index = int((particles[0,i]-z_min)/dz)
+            if periodic_particles and left_index>n_points-2:
+                left_index = 0
             if (left_index<0 or left_index>n_points-2):
                 print 'bad left_index:', left_index, z_min, particles[0,i], z_max
             electric_field = -(potential[left_index+1]-potential[left_index])/dz
@@ -54,9 +61,15 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
             particles[1,i] += accel*dt
             if (update_position):
                 particles[0,i] += particles[1,i]*dt
-                within_bounds = (particles[0,i]>z_min+eps and particles[0,i]<z_max-eps)
+                if periodic_particles:
+                    within_bounds = particles[0,i]<0.99*inactive_slot_position_flag
+                    particles[0,i] = (particles[0,i]-z_min) % (z_max-z_min) + z_min
+                else:
+                    within_bounds = (particles[0,i]>z_min+eps and particles[0,i]<z_max-eps)
                 if within_bounds:
                     left_index = int((particles[0,i]-z_min)/dz)
+                    if periodic_particles and left_index>n_points-2:
+                        left_index = 0
                     if (left_index<0 or left_index>n_points-2):
                         print 'bad left_index:', left_index, z_min, particles[0,i], z_max
                     fraction_to_left = ( particles[0,i] % dz )/dz
@@ -71,7 +84,7 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                             if (particles[0,i]>grid[left_index]+object_mask[left_index]*dz):
                                 inside_object = True
                 if (not within_bounds) or inside_object:
-                    particles[0,i] = 2*z_max
+                    particles[0,i] = inactive_slot_position_flag
                     current_empty_slot += 1
                     if (current_empty_slot>largest_allowed_slot):
                         print 'bad current_empty_slot:', current_empty_slot, largest_allowed_slot
@@ -89,10 +102,11 @@ def accumulate_density(grid, object_mask, background_density, largest_index,  pa
     move_particles(grid, object_mask, potential, 0, 1, background_density, largest_index, particles, density, \
                        np.empty(0,dtype=np.int), [-1], update_position=False)
 
-def initialize_mover(grid, object_mask, potential, dt, chage_to_mass, largest_index, particles):
+def initialize_mover(grid, object_mask, potential, dt, chage_to_mass, largest_index, particles, periodic_particles=False):
     density = np.zeros_like(grid)
     move_particles(grid, object_mask, potential, -dt/2, chage_to_mass, 1, largest_index, \
-                       particles, density, np.empty(0,dtype=np.int), [-1], update_position=False)
+                       particles, density, np.empty(0,dtype=np.int), [-1], update_position=False, \
+                       periodic_particles=periodic_particles)
 
 def draw_velocities(uniform_sample,v_th,v_d=0):
     if (v_d!=0):
@@ -249,12 +263,17 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
 
 cdef class sobol_sequencer:
     cdef gsl.gsl_qrng *quasi_random_generator
+    #cdef gsl.gsl_rng *quasi_random_generator
     cdef int rand_dim
     def __init__(self, int rand_dim=1):
         self.rand_dim = rand_dim
-        #cdef gsl.gsl_qrng_type *generator_type = gsl.gsl_qrng_sobol
-        cdef gsl.gsl_qrng_type *generator_type = gsl.gsl_qrng_niederreiter_2
+        cdef gsl.gsl_qrng_type *generator_type = gsl.gsl_qrng_sobol
+        #cdef gsl.gsl_qrng_type *generator_type = gsl.gsl_qrng_niederreiter_2
+        #cdef gsl.gsl_rng_type *generator_type = gsl.gsl_rng_mt19937
+        #cdef gsl.gsl_rng_type *generator_type = gsl.gsl_rng_ranlxs2
+        #cdef gsl.gsl_rng_type *generator_type = gsl.gsl_rng_ranlxd2
         self.quasi_random_generator = gsl.gsl_qrng_alloc(generator_type, self.rand_dim)
+        #self.quasi_random_generator = gsl.gsl_rng_alloc(generator_type)
     def get(self,n):
         cdef np.ndarray[np.float64_t,ndim=1] next_values = np.empty(self.rand_dim, dtype=np.float64)
         cdef np.ndarray[np.float64_t,ndim=2] sequence = np.empty([n,self.rand_dim], dtype=np.float64)
@@ -262,6 +281,7 @@ cdef class sobol_sequencer:
         for i in range(n):
             gsl.gsl_qrng_get(self.quasi_random_generator, <double *> next_values.data)
             for j in range(self.rand_dim):
+                #next_values[j] = gsl.gsl_rng_uniform_pos(self.quasi_random_generator)
                 sequence[i][j] = next_values[j]
         return sequence
 

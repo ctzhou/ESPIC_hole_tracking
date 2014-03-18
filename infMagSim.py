@@ -55,6 +55,12 @@ n_engines = comm.size
 # <codecell>
 
 %%px
+periodic_particles = False # only use with prescribe_potential for now
+prescribe_potential = False or periodic_particles
+def prescribed_potential(grid, t):
+    z_min = grid[0]
+    z_max = grid[-1]
+    return min(1.,t/(z_max-z_min))*np.sin(2.*np.pi*grid/(z_max-z_min))
 boltzmann_electrons = False
 quasineutral = False
 if quasineutral:
@@ -168,7 +174,8 @@ v_d_i = 0
 n_ions = 100000
 extra_storage_factor = 1.2
 background_ion_density = n_ions*n_engines*dz/(z_max-z_min)
-n_bins = n_points;
+n_bins = n_points
+inactive_slot_position_flag = 2*z_max
 
 # <codecell>
 
@@ -187,6 +194,8 @@ else:
     uniform_2d_sample = uniform_2d_sampler.get(n_ions).T
 ions[0][0:n_ions] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
 ions[1][0:n_ions] = norm.ppf(uniform_2d_sample[1])*v_th_i + v_d_i # velocities
+#ions[2][0:n_ions] = np.ones(n_ions) # active slots
+ions[0][n_ions:] = inactive_slot_position_flag
 #ions[2][0:n_ions] = numpy.ones(n_ions,dtype=numpy.float32) # relative weights
 # List remaining slots in reverse order to prevent memory fragmentation
 empty_ion_slots = -numpy.ones(ion_storage_length,dtype=numpy.int)
@@ -232,6 +241,8 @@ if not boltzmann_electrons:
 	uniform_2d_sample = uniform_2d_sampler.get(n_electrons).T
     electrons[0][0:n_electrons] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
     electrons[1][0:n_electrons] = norm.ppf(uniform_2d_sample[1])*v_th_e + v_d_e # velocities
+    #electrons[2][0:n_electrons] = np.ones(n_electrons) # active slots
+    electrons[0][n_electrons:] = inactive_slot_position_flag
     #electrons[2][0:n_electrons] = numpy.ones(n_ions,dtype=numpy.float32) # relative weights
     # List remaining slots in reverse order to prevent memory fragmentation
     empty_electron_slots = -numpy.ones(electron_storage_length,dtype=numpy.int)
@@ -318,10 +329,12 @@ charge_derivative = numpy.zeros_like(grid)
 if not boltzmann_electrons:
     accumulate_density(grid, object_mask, background_electron_density, largest_electron_index, electrons, electron_density)
 
-initialize_mover(grid, object_mask, potential, dt, ion_charge_to_mass, largest_ion_index, ions)
+initialize_mover(grid, object_mask, potential, dt, ion_charge_to_mass, largest_ion_index, ions, \
+		     periodic_particles=periodic_particles)
 if not boltzmann_electrons:
     electron_charge_to_mass = -1./mass_ratio
-    initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, largest_electron_index, electrons)
+    initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, largest_electron_index, electrons, \
+			 periodic_particles=periodic_particles)
 
 # <codecell>
 
@@ -333,20 +346,30 @@ damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
 for k in range(n_steps):
     comm.Allreduce(MPI.IN_PLACE, ion_density, op=MPI.SUM)
-    ion_density[0] *= 2. # half-cell at ends
-    ion_density[-1] *= 2. # half-cell at ends
+    if periodic_particles:
+	ion_density[0] += ion_density[-1]
+	ion_density[-1] = ion_density[0]
+    else:
+	ion_density[0] *= 2. # half-cell at ends
+	ion_density[-1] *= 2. # half-cell at ends
     if boltzmann_electrons:
 	electron_density = numpy.exp(potential) # TODO: add electron temp. dep.
     else:
 	comm.Allreduce(MPI.IN_PLACE, electron_density, op=MPI.SUM)
-	electron_density[0] *= 2. # half-cell at ends
-	electron_density[-1] *= 2. # half-cell at ends
+	if periodic_particles:
+	    electron_density[0] += electron_density[-1]
+	    electron_density[-1] = electron_density[0]
+	else:
+	    electron_density[0] *= 2. # half-cell at ends
+	    electron_density[-1] *= 2. # half-cell at ends
     if include_object:
 	dist_to_obj = circular_cross_section(grid, t, t_object_center, v_drift, object_radius, object_mask)
     else:
 	dist_to_obj = 100.
     object_potential = -3.
-    if quasineutral:
+    if prescribe_potential:
+	potential = prescribed_potential(grid,t)
+    elif quasineutral:
 	potential = numpy.log(numpy.maximum(ion_density,numpy.exp(object_potential)*numpy.ones_like(ion_density))) # TODO: add electron temp. dep.
 	potential[0] = 0.
 	potential[-1] = 0.
@@ -392,11 +415,12 @@ for k in range(n_steps):
 	print k
     move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
 			   background_ion_density, largest_ion_index, ions, ion_density, \
-			   empty_ion_slots, current_empty_ion_slot)
+			   empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles)
     if not boltzmann_electrons:
 	move_particles(grid, object_mask, potential, dt, electron_charge_to_mass, \
 			   background_electron_density, largest_electron_index, \
-			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot)
+			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot, \
+			   periodic_particles=periodic_particles)
     expected_ion_injection = 2*dt*v_th_i/math.sqrt(2*math.pi)*n_ions/(z_max-z_min)
     n_ions_inject = int(expected_ion_injection)
     if not boltzmann_electrons:
@@ -411,7 +435,7 @@ for k in range(n_steps):
     if uniform_2d_sampler.shared_seed:
 	for injection_number in injection_numbers[:mpi_id]:
 	    sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
-    if n_ions_inject>0:
+    if n_ions_inject>0 and not periodic_particles:
 	inject_particles(n_ions_inject, grid, dt, v_th_i, background_ion_density, \
 			     uniform_2d_sampler, ions, empty_ion_slots, \
 			     current_empty_ion_slot, largest_ion_index, ion_density)
@@ -427,7 +451,7 @@ for k in range(n_steps):
 	if uniform_2d_sampler.shared_seed:
 	    for injection_number in injection_numbers[:mpi_id]:
 		sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
-	if n_electrons_inject>0:
+	if n_electrons_inject>0 and not periodic_particles:
 	    inject_particles(n_electrons_inject, grid, dt, v_th_e, background_electron_density, \
 				 uniform_2d_sampler, electrons, empty_electron_slots, \
 				 current_empty_electron_slot, largest_electron_index, electron_density)
