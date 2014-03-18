@@ -15,7 +15,8 @@ infMagSim_cython.c: infMagSim_cython.pyx
 
 infMagSim_cython.so: infMagSim_cython.c
 	gcc -shared -pthread -fPIC -fwrapv -O2 -Wall -fno-strict-aliasing \
-		-lgsl \
+		-L /home/chaako/local/lib -lgsl -lgslcblas \
+		-I /home/chaako/local/include/ \
 		-I /home/chaako/virtualenvs/IPython/include/python2.7/ \
 		-I /home/chaako/virtualenvs/IPython/lib/python2.7/site-packages/numpy/core/include/ \
 		-o infMagSim_cython.so infMagSim_cython.c
