@@ -219,19 +219,21 @@ if (mpi_id==0):
 # <codecell>
 
 %%px
-if not boltzmann_electrons:
-    mass_ratio = 1./1836.
-    n_electrons = n_ions
-    v_th_e = 1./math.sqrt(mass_ratio)
-    v_d_e = 0.
-    background_electron_density = n_electrons*n_engines*dz/(z_max-z_min)
-    n_bins = n_points;
-    v_max_e = 4.*v_th_e
-    v_min_e = -v_max_e
+#if not boltzmann_electrons:
+mass_ratio = 1./1836.
+n_electrons = n_ions
+v_th_e = 1./math.sqrt(mass_ratio)
+v_d_e = 0.
+background_electron_density = n_electrons*n_engines*dz/(z_max-z_min)
+n_bins = n_points;
+v_max_e = 4.*v_th_e
+v_min_e = -v_max_e
 
 # <codecell>
 
 %%px
+electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
 if not boltzmann_electrons:
     largest_electron_index = [n_electrons-1]
     electron_storage_length = int(n_electrons*extra_storage_factor)
@@ -254,8 +256,6 @@ if not boltzmann_electrons:
     empty_electron_slots = -numpy.ones(electron_storage_length,dtype=numpy.int)
     current_empty_electron_slot = [(electron_storage_length-n_electrons)-1]
     empty_electron_slots[0:(current_empty_electron_slot[0]+1)] = range(electron_storage_length-1,n_electrons-1,-1)
-    electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
-    electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
     electron_hist_n, electron_hist_n_edges = numpy.histogram(electrons[0][0:n_electrons], bins=electron_hist_n_edges)
     electron_hist_v, electron_hist_v_edges = numpy.histogram(electrons[1][0:n_electrons], bins=electron_hist_v_edges)
     comm.Allreduce(MPI.IN_PLACE, electron_hist_n, op=MPI.SUM)
@@ -316,6 +316,7 @@ object_center_mask = numpy.zeros_like(grid) # Could make 1 shorter
 if include_object:
     circular_cross_section(grid,1.e-8,1.,1.,1.,object_center_mask)
 potential = numpy.zeros_like(grid)
+previous_potential = numpy.zeros_like(grid)
 
 if (mpi_id==0):
     object_masks = []
@@ -351,10 +352,15 @@ if not boltzmann_electrons:
 %%px
 n_steps = 1000
 storage_step = 1
+store_all_until_step = 100
 print_step = 100
 damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
 for k in range(n_steps):
+#    if k==1: # simulate moon by knocking out particles
+#        object_mask[0.45*n_cells:0.55*n_cells] = 1.
+#    else:
+#        object_mask = numpy.zeros_like(grid)
     comm.Allreduce(MPI.IN_PLACE, ion_density, op=MPI.SUM)
     if periodic_particles:
 	ion_density[0] += ion_density[-1]
@@ -396,15 +402,32 @@ for k in range(n_steps):
 		damping_factor = 0.
 	    charge_density = ion_density-electron_density
 	    charge_derivative = (charge_density-previous_charge_density)/dt
-	    poisson_solve(grid, object_center_mask, charge_density+damping_factor*charge_derivative, \
-			      debye_length, potential, \
-			      object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot))
 	    previous_charge_density = charge_density
+	    if boltzmann_electrons:
+		charge_density = ion_density
+		max_potential_iter = 20
+	    else:
+		max_potential_iter = 1
+	    potential_iter = 0
+	    potential_converged = False
+	    potential_convergence_threshold = 0.0001
+	    while (not potential_converged and potential_iter<max_potential_iter):
+		poisson_solve(grid, object_center_mask, charge_density+damping_factor*charge_derivative, \
+				  debye_length, potential, \
+				  object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot), \
+				  boltzmann_electrons=boltzmann_electrons)
+		max_potential_change = np.amax(np.fabs(potential-previous_potential))
+		previous_potential[:] = potential[:]
+		if max_potential_change<potential_convergence_threshold:
+		    potential_converged = True
+		potential_iter += 1
+#	    if mpi_id==0:
+#		print potential_iter, max_potential_change
 	else:
 	    fraction_of_obj_pot = 1.
 	    poisson_solve(grid, object_mask, ion_density-electron_density, debye_length, potential, \
 			      object_potential=object_potential, object_transparency=0.)
-    if (k%storage_step==0):
+    if (k%storage_step==0 or k<store_all_until_step):
 	    occupied_ion_slots = (ions[0]==ions[0])
 	    occupied_ion_slots[empty_ion_slots[0:current_empty_ion_slot[0]+1]] = False
 	    n_bins = 100
@@ -415,17 +438,18 @@ for k in range(n_steps):
 				      bins=[ion_hist_n_edges,ion_hist_v_edges]) # could use range=[[z_min,z_max],[v_min,v_max]]
 	    ion_hist2d = np.ascontiguousarray(ion_hist2d)
 	    comm.Allreduce(MPI.IN_PLACE, ion_hist2d, op=MPI.SUM)
-	    occupied_electron_slots = (electrons[0]==electrons[0])
-	    occupied_electron_slots[empty_electron_slots[0:current_empty_electron_slot[0]+1]] = False
-	    n_bins = 100
-	    electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
-	    electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
-	    electron_hist2d, electron_hist_n_edges, electron_hist_v_edges = \
-		numpy.histogram2d(electrons[0][occupied_electron_slots], electrons[1][occupied_electron_slots], \
-				      bins=[electron_hist_n_edges,electron_hist_v_edges]) # could use range=[[z_min,z_max],[v_min,v_max]]
-	    electron_hist2d = np.ascontiguousarray(electron_hist2d)
-	    comm.Allreduce(MPI.IN_PLACE, electron_hist2d, op=MPI.SUM)
-    if (k%storage_step==0 and mpi_id==0):
+	    if not boltzmann_electrons:
+		occupied_electron_slots = (electrons[0]==electrons[0])
+		occupied_electron_slots[empty_electron_slots[0:current_empty_electron_slot[0]+1]] = False
+		n_bins = 100
+		electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+		electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
+		electron_hist2d, electron_hist_n_edges, electron_hist_v_edges = \
+		    numpy.histogram2d(electrons[0][occupied_electron_slots], electrons[1][occupied_electron_slots], \
+					  bins=[electron_hist_n_edges,electron_hist_v_edges]) # could use range=[[z_min,z_max],[v_min,v_max]]
+		electron_hist2d = np.ascontiguousarray(electron_hist2d)
+		comm.Allreduce(MPI.IN_PLACE, electron_hist2d, op=MPI.SUM)
+    if ((k%storage_step==0 or k<store_all_until_step) and mpi_id==0):
         times.append(t)
         copy = numpy.empty_like(object_mask)
         copy[:] = object_mask
@@ -445,9 +469,10 @@ for k in range(n_steps):
         copy = numpy.empty_like(ion_hist2d)
         copy[:] = ion_hist2d
         ion_distribution_functions.append(copy)
-        copy = numpy.empty_like(electron_hist2d)
-        copy[:] = electron_hist2d
-        electron_distribution_functions.append(copy)
+	if not boltzmann_electrons:
+	    copy = numpy.empty_like(electron_hist2d)
+	    copy[:] = electron_hist2d
+	    electron_distribution_functions.append(copy)
     if (k%print_step==0 and mpi_id==0):
 	print k
     move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \

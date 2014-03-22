@@ -175,7 +175,8 @@ def tridiagonal_solve(np.ndarray[np.float64_t,ndim=1] a, np.ndarray[np.float64_t
 def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,ndim=1] object_mask, \
                       np.ndarray[np.float32_t,ndim=1] charge, float debye_length, \
                       np.ndarray[np.float32_t,ndim=1] potential, float object_potential=-4., \
-                      float object_transparency=1.):
+                      float object_transparency=1., int boltzmann_electrons=False):
+    ## if boltzmann_electrons then charge=ion_charge
     cdef float eps = 1.e-5
     cdef int n_points = len(grid)
     cdef float z_min = grid[0]
@@ -186,11 +187,20 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
     cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal = np.ones_like(diagonal)
     cdef np.ndarray[np.float64_t,ndim=1] upper_diagonal = np.ones_like(diagonal)
     cdef np.ndarray[np.float64_t,ndim=1] right_hand_side = -dz*dz*charge.astype(np.float64)[1:n_points-1]/debye_length/debye_length
+    if boltzmann_electrons:
+        diagonal -= dz*dz*np.exp(potential[1:n_points-1])/debye_length/debye_length
+        right_hand_side += dz*dz*np.exp(potential[1:n_points-1]) \
+            *(np.ones_like(diagonal)-potential[1:n_points-1])/debye_length/debye_length
 
     cdef np.ndarray[np.float64_t,ndim=1] diagonal_obj = -2.*np.ones_like(diagonal)
     cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal_obj = np.ones_like(diagonal)
     cdef np.ndarray[np.float64_t,ndim=1] upper_diagonal_obj = np.ones_like(diagonal)
     cdef np.ndarray[np.float64_t,ndim=1] right_hand_side_obj = -dz*dz*charge.astype(np.float64)[1:n_points-1]/debye_length/debye_length
+    if boltzmann_electrons:
+        diagonal_obj -= dz*dz*np.exp(potential[1:n_points-1])/debye_length/debye_length
+        right_hand_side_obj += dz*dz*np.exp(potential[1:n_points-1]) \
+            *(np.ones_like(diagonal_obj)-potential[1:n_points-1])/debye_length/debye_length
+        # TODO: check that object solve works properly with Boltzmann electrons
 
     # TODO: resolve issues when object boundaries fall on grid points
     cdef float zeta_left, zeta_right
