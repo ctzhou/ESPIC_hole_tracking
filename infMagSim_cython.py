@@ -37,7 +37,7 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
     cdef int j, object_index
     for j in range(n_points):
         density[j] = 0
-    cdef int within_bounds, inside_object
+    cdef int within_bounds, within_bounds_before_move, inside_object
     cdef int left_index
     cdef float electric_field
     cdef float accel
@@ -50,7 +50,9 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
             particles[0,i] = (particles[0,i]-z_min) % (z_max-z_min) + z_min
         else:
             within_bounds = (particles[0,i]>z_min+eps and particles[0,i]<z_max-eps)
-        if (within_bounds):
+        within_bounds_before_move = within_bounds
+        inside_object = False
+        if (within_bounds_before_move):
             left_index = int((particles[0,i]-z_min)/dz)
             if periodic_particles and left_index>n_points-2:
                 left_index = 0
@@ -75,37 +77,39 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                     fraction_to_left = ( particles[0,i] % dz )/dz
                     current_potential = potential[left_index]*fraction_to_left + \
                         potential[left_index+1]*(1.-fraction_to_left)
-                    inside_object = False
-                    if (object_mask[left_index]>0.):
-                        if (object_mask[left_index+1]>0.):
-                            if (particles[0,i]>grid[left_index]+(1.-object_mask[left_index])*dz):
-                                inside_object = True
-                        else:
-                            if (particles[0,i]>grid[left_index]+object_mask[left_index]*dz):
-                                inside_object = True
-                if (not within_bounds) or inside_object:
-                    particles[0,i] = inactive_slot_position_flag
-                    current_empty_slot += 1
-                    if (current_empty_slot>largest_allowed_slot):
-                        print 'bad current_empty_slot:', current_empty_slot, largest_allowed_slot
-                    empty_slots[current_empty_slot] = i
-        if (within_bounds):
-            fraction_to_left = ( particles[0,i] % dz )/dz
-            density[left_index] += fraction_to_left/background_density
-            density[left_index+1] += (1-fraction_to_left)/background_density
+        if within_bounds:
+            if (object_mask[left_index]>0.):
+                if (object_mask[left_index+1]>0.):
+                    if (particles[0,i]>grid[left_index]+(1.-object_mask[left_index])*dz):
+                        inside_object = True
+                    else:
+                        if (particles[0,i]>grid[left_index]+object_mask[left_index]*dz):
+                            inside_object = True
+        if within_bounds_before_move:
+            if (not within_bounds) or inside_object:
+                particles[0,i] = inactive_slot_position_flag
+                current_empty_slot += 1
+                if (current_empty_slot>largest_allowed_slot):
+                    print 'bad current_empty_slot:', current_empty_slot, largest_allowed_slot
+                empty_slots[current_empty_slot] = i
+            else:
+                fraction_to_left = ( particles[0,i] % dz )/dz
+                density[left_index] += fraction_to_left/background_density
+                density[left_index+1] += (1-fraction_to_left)/background_density
     largest_index_list[0] = largest_index
     current_empty_slot_list[0] = current_empty_slot
 
 
-def accumulate_density(grid, object_mask, background_density, largest_index,  particles, density):
+def accumulate_density(grid, object_mask, background_density, largest_index,  particles, density, \
+                           empty_slots, current_empty_slot_list):
     potential = np.zeros_like(grid)
     move_particles(grid, object_mask, potential, 0, 1, background_density, largest_index, particles, density, \
-                       np.empty(0,dtype=np.int), [-1], update_position=False)
+                       empty_slots, current_empty_slot_list, update_position=False)
 
-def initialize_mover(grid, object_mask, potential, dt, chage_to_mass, largest_index, particles, periodic_particles=False):
-    density = np.zeros_like(grid)
+def initialize_mover(grid, object_mask, potential, dt, chage_to_mass, largest_index, particles, \
+                         density, empty_slots, current_empty_slot_list, periodic_particles=False):
     move_particles(grid, object_mask, potential, -dt/2, chage_to_mass, 1, largest_index, \
-                       particles, density, np.empty(0,dtype=np.int), [-1], update_position=False, \
+                       particles, density, empty_slots, current_empty_slot_list, update_position=False, \
                        periodic_particles=periodic_particles)
 
 def draw_velocities(uniform_sample,v_th,v_d=0):

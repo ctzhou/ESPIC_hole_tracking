@@ -41,7 +41,7 @@ import numpy
 import matplotlib
 matplotlib.use('Agg') # non-GUI backend
 import matplotlib.pyplot
-import ghalton
+#import ghalton
 from scipy.stats import norm
 from infMagSim_cython import *
 
@@ -332,19 +332,22 @@ if (mpi_id==0):
 
 %%px
 ion_density = numpy.zeros_like(grid)
-accumulate_density(grid, object_mask, background_ion_density, largest_ion_index, ions, ion_density)
+accumulate_density(grid, object_mask, background_ion_density, largest_ion_index, ions, ion_density, \
+		       empty_ion_slots, current_empty_ion_slot)
 electron_density = numpy.zeros_like(grid)
 charge_density = numpy.zeros_like(grid)
 previous_charge_density = numpy.zeros_like(grid)
 charge_derivative = numpy.zeros_like(grid)
 if not boltzmann_electrons:
-    accumulate_density(grid, object_mask, background_electron_density, largest_electron_index, electrons, electron_density)
+    accumulate_density(grid, object_mask, background_electron_density, largest_electron_index, electrons, \
+			   electron_density, empty_electron_slots, current_empty_electron_slot)
 
 initialize_mover(grid, object_mask, potential, dt, ion_charge_to_mass, largest_ion_index, ions, \
-		     periodic_particles=periodic_particles)
+	     ion_density, empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles)
 if not boltzmann_electrons:
     electron_charge_to_mass = -1./mass_ratio
     initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, largest_electron_index, electrons, \
+			 electron_density, empty_electron_slots, current_empty_electron_slot, \
 			 periodic_particles=periodic_particles)
 
 # <codecell>
