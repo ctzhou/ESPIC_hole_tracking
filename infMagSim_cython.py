@@ -107,7 +107,8 @@ def accumulate_density(grid, object_mask, background_density, largest_index,  pa
                        empty_slots, current_empty_slot_list, update_position=False)
 
 def initialize_mover(grid, object_mask, potential, dt, chage_to_mass, largest_index, particles, \
-                         density, empty_slots, current_empty_slot_list, periodic_particles=False):
+                         empty_slots, current_empty_slot_list, periodic_particles=False):
+    density = np.zeros_like(grid)
     move_particles(grid, object_mask, potential, -dt/2, chage_to_mass, 1, largest_index, \
                        particles, density, empty_slots, current_empty_slot_list, update_position=False, \
                        periodic_particles=periodic_particles)
@@ -145,10 +146,11 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
         #particles[1,i] = velocity_sign*np.fabs(velocities[l])
         #if (velocity_sign<0.):
         particles[1,i] = velocities[l]
+	# TODO: debye length shorter than eps could give problems with below
         if (velocities[l]<0.):
-            particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
+            particles[0,i] = z_max-2.*eps + partial_dt[l]*particles[1,i]
         else:
-            particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
+            particles[0,i] = z_min+2.*eps + partial_dt[l]*particles[1,i]
         if (empty_slots[current_empty_slot]>largest_index):
             largest_index = empty_slots[current_empty_slot]
         left_index = int((particles[0,i]-z_min)/dz)
