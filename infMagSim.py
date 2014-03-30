@@ -435,6 +435,7 @@ for k in range(n_steps):
 	    occupied_ion_slots[empty_ion_slots[0:current_empty_ion_slot[0]+1]] = False
 	    n_bins = 100
 	    ion_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+	    n_bins = 100
 	    ion_hist_v_edges = np.arange(v_min_i,v_max_i+eps,(v_max_i-v_min_i)/n_bins)
 	    ion_hist2d, ion_hist_n_edges, ion_hist_v_edges = \
 		numpy.histogram2d(ions[0][occupied_ion_slots], ions[1][occupied_ion_slots], \
@@ -446,6 +447,7 @@ for k in range(n_steps):
 		occupied_electron_slots[empty_electron_slots[0:current_empty_electron_slot[0]+1]] = False
 		n_bins = 100
 		electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+		n_bins = 100
 		electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
 		electron_hist2d, electron_hist_n_edges, electron_hist_v_edges = \
 		    numpy.histogram2d(electrons[0][occupied_electron_slots], electrons[1][occupied_electron_slots], \
@@ -479,8 +481,8 @@ for k in range(n_steps):
     if (k%print_step==0 and mpi_id==0):
 	print k
     move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
-			   background_ion_density, largest_ion_index, ions, ion_density, \
-			   empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles)
+		       background_ion_density, largest_ion_index, ions, ion_density, \
+		       empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles)
     if not boltzmann_electrons:
 	move_particles(grid, object_mask, potential, dt, electron_charge_to_mass, \
 			   background_electron_density, largest_electron_index, \
@@ -492,6 +494,7 @@ for k in range(n_steps):
 	expected_electron_injection = 2*dt*v_th_e/math.sqrt(2*math.pi)*n_electrons/(z_max-z_min)
 	n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
+    # TODO: unify random number usage with sampler
     if (expected_ion_injection-n_ions_inject)>numpy.random.rand():
 	n_ions_inject += 1
     injection_numbers = numpy.zeros(n_engines,dtype=np.int32)

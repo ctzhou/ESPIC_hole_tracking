@@ -44,7 +44,7 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
     cdef float fraction_to_left
     cdef float current_potential=0.
     cdef int i
-    for i in range(largest_index):
+    for i in range(largest_index+1):
         if periodic_particles:
             within_bounds = particles[0,i]<0.99*inactive_slot_position_flag
             particles[0,i] = (particles[0,i]-z_min) % (z_max-z_min) + z_min
@@ -82,10 +82,10 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                 if (object_mask[left_index+1]>0.):
                     if (particles[0,i]>grid[left_index]+(1.-object_mask[left_index])*dz):
                         inside_object = True
-                    else:
-                        if (particles[0,i]>grid[left_index]+object_mask[left_index]*dz):
-                            inside_object = True
-        if within_bounds_before_move:
+                else:
+                    if (particles[0,i]>grid[left_index]+object_mask[left_index]*dz):
+                        inside_object = True
+        if within_bounds_before_move or (particles[0,i]<0.99*inactive_slot_position_flag):
             if (not within_bounds) or inside_object:
                 particles[0,i] = inactive_slot_position_flag
                 current_empty_slot += 1
@@ -146,13 +146,13 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
         #particles[1,i] = velocity_sign*np.fabs(velocities[l])
         #if (velocity_sign<0.):
         particles[1,i] = velocities[l]
-	# TODO: debye length shorter than eps could give problems with below
+        # TODO: debye length shorter than eps could give problems with below
         if (velocities[l]<0.):
-            particles[0,i] = z_max-2.*eps + partial_dt[l]*particles[1,i]
+            particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
         else:
-            particles[0,i] = z_min+2.*eps + partial_dt[l]*particles[1,i]
-        if (empty_slots[current_empty_slot]>largest_index):
-            largest_index = empty_slots[current_empty_slot]
+            particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
+        if (i>largest_index):
+            largest_index = i
         left_index = int((particles[0,i]-z_min)/dz)
         if (left_index<0 or left_index>n_points-2):
             print 'bad left_index:', left_index, z_min, particles[0,i], z_max, particles[1,i], partial_dt[l]
