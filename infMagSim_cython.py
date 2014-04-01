@@ -168,6 +168,7 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
 def tridiagonal_solve(np.ndarray[np.float64_t,ndim=1] a, np.ndarray[np.float64_t,ndim=1] b, \
                           np.ndarray[np.float64_t,ndim=1] c, np.ndarray[np.float64_t,ndim=1] d, \
                           np.ndarray[np.float64_t,ndim=1] x): # also modifies b and d
+    ## first element of a is a row below first elements of b, c, and d
     cdef int n = len(d)
     cdef int j
     for j in range(n-1):
@@ -181,7 +182,7 @@ def tridiagonal_solve(np.ndarray[np.float64_t,ndim=1] a, np.ndarray[np.float64_t
 def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,ndim=1] object_mask, \
                       np.ndarray[np.float32_t,ndim=1] charge, float debye_length, \
                       np.ndarray[np.float32_t,ndim=1] potential, float object_potential=-4., \
-                      float object_transparency=1., int boltzmann_electrons=False):
+                      float object_transparency=1., int boltzmann_electrons=False, int periodic_potential=False):
     ## if boltzmann_electrons then charge=ion_charge
     cdef float eps = 1.e-5
     cdef int n_points = len(grid)
@@ -189,66 +190,81 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
     cdef float z_max = grid[n_points-1]
     cdef float dz = grid[1]-grid[0]
 
-    cdef np.ndarray[np.float64_t,ndim=1] diagonal = -2*np.ones(n_points-2,dtype=np.float64) # Exclude dirichlet boundaries
+    cdef np.ndarray[np.float64_t,ndim=1] diagonal = -2.*np.ones(n_points,dtype=np.float64)
     cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal = np.ones_like(diagonal)
     cdef np.ndarray[np.float64_t,ndim=1] upper_diagonal = np.ones_like(diagonal)
-    cdef np.ndarray[np.float64_t,ndim=1] right_hand_side = -dz*dz*charge.astype(np.float64)[1:n_points-1]/debye_length/debye_length
+    cdef np.ndarray[np.float64_t,ndim=1] right_hand_side = np.zeros_like(diagonal)
+    right_hand_side[0:n_points-1] = charge.astype(np.float64)[0:n_points-1] # scale later
     if boltzmann_electrons:
-        diagonal -= dz*dz*np.exp(potential[1:n_points-1])/debye_length/debye_length
-        right_hand_side += dz*dz*np.exp(potential[1:n_points-1]) \
-            *(np.ones_like(diagonal)-potential[1:n_points-1])/debye_length/debye_length
+        diagonal -= dz*dz*np.exp(potential)/debye_length/debye_length
+        right_hand_side -= np.exp(potential)*(np.ones_like(diagonal)-potential[1:n_points-1])
+    right_hand_side *= -dz*dz/debye_length/debye_length
+    # Dirichlet left boundary
+    diagonal[0] = 1.
+    upper_diagonal[0] = 0.
+    right_hand_side[0] = 0.
+    cdef np.ndarray[np.float64_t,ndim=1] periodic_u = np.zeros(n_points,dtype=np.float64)
+    cdef np.ndarray[np.float64_t,ndim=1] periodic_v = np.zeros_like(periodic_u)
+    if periodic_potential:
+        # Enforce last element equal first
+        lower_diagonal[n_points-2] = 0.
+        diagonal[n_points-1] = 1.
+        right_hand_side[n_points-1] = 0.
+        # Use Sherman-Morrison formula for non-tidiagonal part
+        periodic_u[n_points-1] = 1.
+        periodic_v[0] = -1.
+    else:
+        # Dirichlet right boundary
+        lower_diagonal[n_points-2] = 0.
+        diagonal[n_points-1] = 1.
+        right_hand_side[n_points-1] = 0.
 
-    cdef np.ndarray[np.float64_t,ndim=1] diagonal_obj = -2.*np.ones_like(diagonal)
-    cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal_obj = np.ones_like(diagonal)
-    cdef np.ndarray[np.float64_t,ndim=1] upper_diagonal_obj = np.ones_like(diagonal)
-    cdef np.ndarray[np.float64_t,ndim=1] right_hand_side_obj = -dz*dz*charge.astype(np.float64)[1:n_points-1]/debye_length/debye_length
-    if boltzmann_electrons:
-        diagonal_obj -= dz*dz*np.exp(potential[1:n_points-1])/debye_length/debye_length
-        right_hand_side_obj += dz*dz*np.exp(potential[1:n_points-1]) \
-            *(np.ones_like(diagonal_obj)-potential[1:n_points-1])/debye_length/debye_length
-        # TODO: check that object solve works properly with Boltzmann electrons
+    cdef np.ndarray[np.float64_t,ndim=1] diagonal_obj = np.copy(diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal_obj = np.copy(lower_diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] upper_diagonal_obj = np.copy(upper_diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] right_hand_side_obj = np.copy(right_hand_side)
+    # TODO: check that object solve works properly with Boltzmann electrons
 
     # TODO: resolve issues when object boundaries fall on grid points
     cdef float zeta_left, zeta_right
-    cdef int j, jj
+    cdef int j
     for j in range(1,n_points-1):
-        jj = j -1 # -1 since excluding bdy
         if (object_mask[j]>0.):
             if (object_mask[j]<1.-eps):
                 # Partially covered cell
                 if (object_mask[j+1]>0.):
                     # left closest point outside
                     zeta_left = (1.-object_mask[j])*dz
-                    lower_diagonal_obj[jj-1] = zeta_left/dz # -1 since lower diagonal shifted
-                    diagonal_obj[jj] = -1.-zeta_left/dz
-                    upper_diagonal_obj[jj] = 0.
-                    right_hand_side_obj[jj] *= zeta_left/dz
-                    right_hand_side_obj[jj] -= object_potential
+                    lower_diagonal_obj[j-1] = zeta_left/dz # -1 since lower diagonal shifted
+                    diagonal_obj[j] = -1.-zeta_left/dz
+                    upper_diagonal_obj[j] = 0.
+                    right_hand_side_obj[j] *= zeta_left/dz
+                    right_hand_side_obj[j] -= object_potential
                 elif (object_mask[j-1]<1.-eps):
                     # Only point inside
                     zeta_left = (1.-object_mask[j-1])*dz
                     zeta_right = (1.-object_mask[j])*dz
-                    lower_diagonal_obj[jj-1] = -(1.-zeta_left/dz) # -1 since lower diagonal shifted
-                    diagonal_obj[jj] = -(zeta_left+zeta_right)/dz
-                    upper_diagonal_obj[jj] = -(1.-zeta_right/dz)
-                    right_hand_side_obj[jj] = -2.*object_potential
+                    lower_diagonal_obj[j-1] = -(1.-zeta_left/dz) # -1 since lower diagonal shifted
+                    diagonal_obj[j] = -(zeta_left+zeta_right)/dz
+                    upper_diagonal_obj[j] = -(1.-zeta_right/dz)
+                    right_hand_side_obj[j] = -2.*object_potential
                 elif (object_mask[j-1]>1.-eps):
                     # right closest point inside
                     zeta_right = (1.-object_mask[j])*dz
-                    lower_diagonal_obj[jj-1] = 0. # -1 since lower diagonal shifted
-                    diagonal_obj[jj] = -2.*zeta_right/dz
-                    upper_diagonal_obj[jj] = -2.*(1.-zeta_right/dz)
-                    right_hand_side_obj[jj] = -2.*object_potential
+                    lower_diagonal_obj[j-1] = 0. # -1 since lower diagonal shifted
+                    diagonal_obj[j] = -2.*zeta_right/dz
+                    upper_diagonal_obj[j] = -2.*(1.-zeta_right/dz)
+                    right_hand_side_obj[j] = -2.*object_potential
                 else:
                     print 'bad object_mask1'
             elif (object_mask[j]>1.-eps):
                 if (object_mask[j-1]<1.-eps):
                     # left closest point inside
                     zeta_left = (1.-object_mask[j-1])*dz
-                    lower_diagonal_obj[jj-1] = -2.*(1.-zeta_left/dz) # -1 since lower diagonal shifted
-                    diagonal_obj[jj] = -2.*zeta_left/dz
-                    upper_diagonal_obj[jj] = 0.
-                    right_hand_side_obj[jj] = -2.*object_potential
+                    lower_diagonal_obj[j-1] = -2.*(1.-zeta_left/dz) # -1 since lower diagonal shifted
+                    diagonal_obj[j] = -2.*zeta_left/dz
+                    upper_diagonal_obj[j] = 0.
+                    right_hand_side_obj[j] = -2.*object_potential
                 elif (object_mask[j-1]>1.-eps):
                     # Interior point
                     right_hand_side_obj[j] = 0. # Constant derivative inside object (hopefully zero)
@@ -259,23 +275,31 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
         elif (object_mask[j-1]>0.):
             # right closest point outside
             zeta_right = (1.-object_mask[j-1])*dz
-            if (jj>0):
-                lower_diagonal_obj[jj-1] = 0. # -1 since lower diagonal shifted
-            diagonal_obj[jj] = -1.-zeta_right/dz
-            upper_diagonal_obj[jj] = zeta_right/dz
-            right_hand_side_obj[jj] *= zeta_right/dz
-            right_hand_side_obj[jj] -= object_potential
+            if (j>0):
+                lower_diagonal_obj[j-1] = 0. # -1 since lower diagonal shifted
+            diagonal_obj[j] = -1.-zeta_right/dz
+            upper_diagonal_obj[j] = zeta_right/dz
+            right_hand_side_obj[j] *= zeta_right/dz
+            right_hand_side_obj[j] -= object_potential
     upper_diagonal = upper_diagonal*object_transparency + upper_diagonal_obj*(1.-object_transparency)
     diagonal = diagonal*object_transparency + diagonal_obj*(1.-object_transparency)
     lower_diagonal = lower_diagonal*object_transparency + lower_diagonal_obj*(1.-object_transparency)
     right_hand_side = right_hand_side*object_transparency + right_hand_side_obj*(1.-object_transparency)
     cdef np.ndarray[np.float64_t,ndim=1] result = np.zeros_like(diagonal)
-    potential[0] = 0.
-    potential[n_points-1] = 0.
-    tridiagonal_solve(lower_diagonal, diagonal, upper_diagonal, right_hand_side, result)
+    cdef np.ndarray[np.float64_t,ndim=1] periodic_w = np.zeros_like(diagonal)
+    if periodic_potential:
+        # Use Sherman-Morrison formula to deal with non-tridiagonal part
+        tridiagonal_solve(lower_diagonal, diagonal, upper_diagonal, right_hand_side, result)
+        tridiagonal_solve(lower_diagonal, diagonal, upper_diagonal, periodic_u, periodic_w)
+        result = result - np.dot(periodic_v,result)/(1.+np.dot(periodic_v,periodic_w))*periodic_w
+    else:
+        tridiagonal_solve(lower_diagonal, diagonal, upper_diagonal, right_hand_side, result)
     cdef np.ndarray[np.float32_t,ndim=1] result_32 = result.astype(np.float32)
-    for j in range(1,n_points-1):
-        potential[j] = result_32[j-1]
+    cdef double average_potential = 0.
+    if periodic_potential:
+        average_potential = np.mean(result_32)
+    for j in range(n_points):
+        potential[j] = result_32[j]-average_potential
 
 cdef class sobol_sequencer:
     cdef gsl.gsl_qrng *quasi_random_generator

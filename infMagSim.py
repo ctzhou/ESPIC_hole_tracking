@@ -55,8 +55,9 @@ n_engines = comm.size
 # <codecell>
 
 %%px
-periodic_particles = False # only use with prescribe_potential for now
-prescribe_potential = False or periodic_particles
+periodic_particles = False
+periodic_potential = periodic_particles
+prescribe_potential = False
 def prescribed_potential(grid, t):
     z_min = grid[0]
     z_max = grid[-1]
@@ -418,7 +419,7 @@ for k in range(n_steps):
 		poisson_solve(grid, object_center_mask, charge_density+damping_factor*charge_derivative, \
 				  debye_length, potential, \
 				  object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot), \
-				  boltzmann_electrons=boltzmann_electrons)
+				  boltzmann_electrons=boltzmann_electrons, periodic_potential=periodic_potential)
 		max_potential_change = np.amax(np.fabs(potential-previous_potential))
 		previous_potential[:] = potential[:]
 		if max_potential_change<potential_convergence_threshold:
@@ -456,28 +457,14 @@ for k in range(n_steps):
 		comm.Allreduce(MPI.IN_PLACE, electron_hist2d, op=MPI.SUM)
     if ((k%storage_step==0 or k<store_all_until_step) and mpi_id==0):
         times.append(t)
-        copy = numpy.empty_like(object_mask)
-        copy[:] = object_mask
-        object_masks.append(copy)
-        copy = numpy.empty_like(ion_density)
-        copy[:] = ion_density
-        ion_densities.append(copy)
-	copy = numpy.empty_like(electron_density)
-	copy[:] = electron_density
-	electron_densities.append(copy)
-	copy = numpy.empty_like(charge_derivative)
-	copy[:] = charge_derivative
-	charge_derivatives.append(copy)
-        copy = numpy.empty_like(potential)
-        copy[:] = potential
-        potentials.append(copy)
-        copy = numpy.empty_like(ion_hist2d)
-        copy[:] = ion_hist2d
-        ion_distribution_functions.append(copy)
+        object_masks.append(numpy.copy(object_mask))
+        ion_densities.append(numpy.copy(ion_density))
+	electron_densities.append(numpy.copy(electron_density))
+	charge_derivatives.append(numpy.copy(charge_derivative))
+        potentials.append(numpy.copy(potential))
+        ion_distribution_functions.append(numpy.copy(ion_hist2d))
 	if not boltzmann_electrons:
-	    copy = numpy.empty_like(electron_hist2d)
-	    copy[:] = electron_hist2d
-	    electron_distribution_functions.append(copy)
+	    electron_distribution_functions.append(numpy.copy(electron_hist2d))
     if (k%print_step==0 and mpi_id==0):
 	print k
     move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
