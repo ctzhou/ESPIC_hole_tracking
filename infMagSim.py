@@ -37,7 +37,7 @@ def execute_notebook(nbfile):
 from mpi4py import MPI
 import io
 import math
-import numpy
+import numpy as np
 import matplotlib
 matplotlib.use('Agg') # non-GUI backend
 import matplotlib.pyplot
@@ -55,6 +55,11 @@ n_engines = comm.size
 # <codecell>
 
 %%px
+read_ion_dist_from_file = False
+smooth_ion_velocities = False
+read_electron_dist_from_file = read_ion_dist_from_file
+smooth_electron_velocities = smooth_ion_velocities
+dist_filename = '/home/chaako/analysis/runTmp/dist_func.npz'
 periodic_particles = False
 periodic_potential = periodic_particles
 prescribe_potential = False
@@ -137,7 +142,7 @@ n_cells = 2000
 n_points = n_cells+1
 dz = (z_max-z_min)/(n_points-1)
 eps = 1e-5
-grid = numpy.arange(z_min,z_max+eps,dz,dtype=numpy.float32)
+grid = np.arange(z_min,z_max+eps,dz,dtype=np.float32)
 if (mpi_id==0):
     print dz
 
@@ -156,12 +161,12 @@ class uniform_2d_sampler_class:
 	    self.sequencer = sobol_sequencer(rand_dim=rand_dim)
 	else:
 	    self.low_discrepancy = False
-	    numpy.random.seed(seed)
+	    np.random.seed(seed)
     def get(self,n):
 	if self.low_discrepancy:
-	    return numpy.asarray(self.sequencer.get(n))
+	    return np.asarray(self.sequencer.get(n))
 	else:
-	    return numpy.random.rand(n,self.rand_dim)
+	    return np.random.rand(n,self.rand_dim)
 if use_quasirandom_numbers:
     uniform_2d_sampler = uniform_2d_sampler_class(seed,low_discrepancy=True,rand_dim=2)
 else:
@@ -185,35 +190,52 @@ inactive_slot_position_flag = 2*z_max
 %%px
 largest_ion_index = [n_ions-1]
 ion_storage_length = int(extra_storage_factor*n_ions)
-ions = numpy.zeros([2,ion_storage_length],dtype=numpy.float32)
-#ions[0][0:n_ions] = numpy.random.rand(n_ions)*(z_max-z_min) + z_min # positions
-#ions[1][0:n_ions] = numpy.random.randn(n_ions)*v_th_i + v_d_i # velocities
+ions = np.zeros([2,ion_storage_length],dtype=np.float32)
+#ions[0][0:n_ions] = np.random.rand(n_ions)*(z_max-z_min) + z_min # positions
 if uniform_2d_sampler.shared_seed:
     for id in range(n_engines):
-	sample = numpy.asarray(uniform_2d_sampler.get(n_ions)).T
+	sample = np.asarray(uniform_2d_sampler.get(n_ions)).T
 	if id==mpi_id:
 	    uniform_2d_sample = sample
 else:
     uniform_2d_sample = uniform_2d_sampler.get(n_ions).T
 ions[0][0:n_ions] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
-ions[1][0:n_ions] = norm.ppf(uniform_2d_sample[1])*v_th_i + v_d_i # velocities
-#ions[2][0:n_ions] = np.ones(n_ions) # active slots
+if (read_ion_dist_from_file):
+    dist_file = np.load(dist_filename)
+    ion_distribution_function = dist_file['ion_distribution_function']
+    ion_v_edges = dist_file['ion_hist_v_edges']
+    weights = ion_distribution_function/np.sum(ion_distribution_function)
+    # TODO: option to sample bins quasi-randomly?
+    ion_sample_bins = np.random.choice(len(weights),size=n_ions,p=weights)
+    left_edge_weights = uniform_2d_sample[1]
+    ions[1][0:n_ions] = left_edge_weights*ion_v_edges[ion_sample_bins] +\
+	(1.-left_edge_weights)*ion_v_edges[ion_sample_bins+1]
+else:
+    #ions[1][0:n_ions] = np.random.randn(n_ions)*v_th_i + v_d_i # velocities
+    ions[1][0:n_ions] = norm.ppf(uniform_2d_sample[1])*v_th_i + v_d_i # velocities
+    #ions[2][0:n_ions] = np.ones(n_ions) # active slots
+    #ions[2][0:n_ions] = np.ones(n_ions,dtype=np.float32) # relative weights
+if smooth_ion_velocities:
+    # TODO: allow quasi-random numbers here?
+    ion_v_smoothing_scale = v_th_i/10.
+    if read_ion_dist_from_file:
+	ion_v_smoothing_scale = ion_v_edges[1]-ion_v_edges[0]
+    ions[1][0:n_ions] += np.random.randn(n_ions)*ion_v_smoothing_scale
 ions[0][n_ions:] = inactive_slot_position_flag
-#ions[2][0:n_ions] = numpy.ones(n_ions,dtype=numpy.float32) # relative weights
 # List remaining slots in reverse order to prevent memory fragmentation
-empty_ion_slots = -numpy.ones(ion_storage_length,dtype=numpy.int)
+empty_ion_slots = -np.ones(ion_storage_length,dtype=np.int)
 current_empty_ion_slot = [(ion_storage_length-n_ions)-1]
 empty_ion_slots[0:(current_empty_ion_slot[0]+1)] = range(ion_storage_length-1,n_ions-1,-1)
 ion_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
 ion_hist_v_edges = np.arange(v_min_i,v_max_i+eps,(v_max_i-v_min_i)/n_bins)
-ion_hist_n, ion_hist_n_edges = numpy.histogram(ions[0][0:n_ions], bins=ion_hist_n_edges)
-ion_hist_v, ion_hist_v_edges = numpy.histogram(ions[1][0:n_ions], bins=ion_hist_v_edges)
+ion_hist_n, ion_hist_n_edges = np.histogram(ions[0][0:n_ions], bins=ion_hist_n_edges)
+ion_hist_v, ion_hist_v_edges = np.histogram(ions[1][0:n_ions], bins=ion_hist_v_edges)
 comm.Allreduce(MPI.IN_PLACE, ion_hist_n, op=MPI.SUM)
 comm.Allreduce(MPI.IN_PLACE, ion_hist_v, op=MPI.SUM)
 if (mpi_id==0):
     fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
     for ax, data, bins in zip(axes,[ion_hist_n,ion_hist_v], [ion_hist_n_edges, ion_hist_v_edges]):
-	ax.step(bins,numpy.append(data,[0]), where='post')
+	ax.step(bins,np.append(data,[0]), where='post')
     filename='initialIonDistribution.png'
     matplotlib.pyplot.savefig(filename)
 
@@ -238,33 +260,50 @@ electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
 if not boltzmann_electrons:
     largest_electron_index = [n_electrons-1]
     electron_storage_length = int(n_electrons*extra_storage_factor)
-    electrons = numpy.zeros([2,electron_storage_length],dtype=numpy.float32)
-    #electrons[0][0:n_electrons] = numpy.random.rand(n_electrons)*(z_max-z_min) + z_min # positions
-    #electrons[1][0:n_electrons] = numpy.random.randn(n_electrons)*v_th_e + v_d_e # velocities
+    electrons = np.zeros([2,electron_storage_length],dtype=np.float32)
+    #electrons[0][0:n_electrons] = np.random.rand(n_electrons)*(z_max-z_min) + z_min # positions
     if uniform_2d_sampler.shared_seed:
 	for id in range(n_engines):
-	    sample = numpy.asarray(uniform_2d_sampler.get(n_electrons)).T
+	    sample = np.asarray(uniform_2d_sampler.get(n_electrons)).T
 	    if id==mpi_id:
 		uniform_2d_sample = sample
     else:
 	uniform_2d_sample = uniform_2d_sampler.get(n_electrons).T
-    electrons[0][0:n_electrons] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
-    electrons[1][0:n_electrons] = norm.ppf(uniform_2d_sample[1])*v_th_e + v_d_e # velocities
-    #electrons[2][0:n_electrons] = np.ones(n_electrons) # active slots
+	electrons[0][0:n_electrons] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
+    if (read_electron_dist_from_file):
+	dist_file = np.load(dist_filename)
+	electron_distribution_function = dist_file['electron_distribution_function']
+	electron_v_edges = dist_file['electron_hist_v_edges']
+	weights = electron_distribution_function/np.sum(electron_distribution_function)
+	# TODO: option to sample bins quasi-randomly?
+	electron_sample_bins = np.random.choice(len(weights),size=n_electrons,p=weights)
+	left_edge_weights = uniform_2d_sample[1]
+	electrons[1][0:n_electrons] = left_edge_weights*electron_v_edges[electron_sample_bins] +\
+	    (1.-left_edge_weights)*electron_v_edges[electron_sample_bins+1]
+    else:
+	#electrons[1][0:n_electrons] = np.random.randn(n_electrons)*v_th_e + v_d_e # velocities
+	electrons[1][0:n_electrons] = norm.ppf(uniform_2d_sample[1])*v_th_e + v_d_e # velocities
+	#electrons[2][0:n_electrons] = np.ones(n_electrons) # active slots
+	#electrons[2][0:n_electrons] = np.ones(n_electrons,dtype=np.float32) # relative weights
+    if smooth_electron_velocities:
+	# TODO: allow quasi-random numbers here?
+	electron_v_smoothing_scale = v_th_e/10.
+	if read_electron_dist_from_file:
+	    electron_v_smoothing_scale = electron_v_edges[1]-electron_v_edges[0]
+	electrons[1][0:n_electrons] += np.random.randn(n_electrons)*electron_v_smoothing_scale
     electrons[0][n_electrons:] = inactive_slot_position_flag
-    #electrons[2][0:n_electrons] = numpy.ones(n_ions,dtype=numpy.float32) # relative weights
     # List remaining slots in reverse order to prevent memory fragmentation
-    empty_electron_slots = -numpy.ones(electron_storage_length,dtype=numpy.int)
+    empty_electron_slots = -np.ones(electron_storage_length,dtype=np.int)
     current_empty_electron_slot = [(electron_storage_length-n_electrons)-1]
     empty_electron_slots[0:(current_empty_electron_slot[0]+1)] = range(electron_storage_length-1,n_electrons-1,-1)
-    electron_hist_n, electron_hist_n_edges = numpy.histogram(electrons[0][0:n_electrons], bins=electron_hist_n_edges)
-    electron_hist_v, electron_hist_v_edges = numpy.histogram(electrons[1][0:n_electrons], bins=electron_hist_v_edges)
+    electron_hist_n, electron_hist_n_edges = np.histogram(electrons[0][0:n_electrons], bins=electron_hist_n_edges)
+    electron_hist_v, electron_hist_v_edges = np.histogram(electrons[1][0:n_electrons], bins=electron_hist_v_edges)
     comm.Allreduce(MPI.IN_PLACE, electron_hist_n, op=MPI.SUM)
     comm.Allreduce(MPI.IN_PLACE, electron_hist_v, op=MPI.SUM)
     if (mpi_id==0):
 	fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
 	for ax, data, bins in zip(axes,[electron_hist_n,electron_hist_v], [electron_hist_n_edges, electron_hist_v_edges]):
-	    ax.step(bins,numpy.append(data,[0]), where='post')
+	    ax.step(bins,np.append(data,[0]), where='post')
 	    filename='initialElectronDistribution.png'
 	    matplotlib.pyplot.savefig(filename)
 
@@ -272,18 +311,18 @@ if not boltzmann_electrons:
 
 #%%px
 #for point, j in zip(grid, range(1+0*n_cells)):
-#    ion_in_cell = numpy.logical_and(point<ions[0][:],ions[0][:]<=point+dz)
+#    ion_in_cell = np.logical_and(point<ions[0][:],ions[0][:]<=point+dz)
 #    ions_in_cell = ions.T[ion_in_cell]
 #    ions_in_cell = ions_in_cell.T
-#    average_ion_velocity_in_cell = numpy.average(ions_in_cell[1])
-#    electron_in_cell = numpy.logical_and(point<electrons[0][:],electrons[0][:]<=point+dz)
+#    average_ion_velocity_in_cell = np.average(ions_in_cell[1])
+#    electron_in_cell = np.logical_and(point<electrons[0][:],electrons[0][:]<=point+dz)
 #    electrons_in_cell = electrons.T[electron_in_cell]
 #    electrons_in_cell = electrons_in_cell.T
-#    average_electron_velocity_in_cell = numpy.average(electrons_in_cell[1])
-#    mpi_writeable = numpy.zeros(1)
+#    average_electron_velocity_in_cell = np.average(electrons_in_cell[1])
+#    mpi_writeable = np.zeros(1)
 #    comm.Allreduce(average_ion_velocity_in_cell, mpi_writeable, op=MPI.SUM)
 #    average_ion_velocity_in_cell = mpi_writeable[0]/n_engines
-#    mpi_writeable = numpy.zeros(1)
+#    mpi_writeable = np.zeros(1)
 #    comm.Allreduce(average_electron_velocity_in_cell, mpi_writeable, op=MPI.SUM)
 #    average_electron_velocity_in_cell = mpi_writeable[0]/n_engines
 #    ions[1][ion_in_cell] -= average_ion_velocity_in_cell
@@ -312,12 +351,12 @@ if (mpi_id==0):
 # <codecell>
 
 %%px
-object_mask = numpy.zeros_like(grid) # Could make 1 shorter
-object_center_mask = numpy.zeros_like(grid) # Could make 1 shorter
+object_mask = np.zeros_like(grid) # Could make 1 shorter
+object_center_mask = np.zeros_like(grid) # Could make 1 shorter
 if include_object:
     circular_cross_section(grid,1.e-8,1.,1.,1.,object_center_mask)
-potential = numpy.zeros_like(grid)
-previous_potential = numpy.zeros_like(grid)
+potential = np.zeros_like(grid)
+previous_potential = np.zeros_like(grid)
 
 if (mpi_id==0):
     object_masks = []
@@ -332,13 +371,13 @@ if (mpi_id==0):
 # <codecell>
 
 %%px
-ion_density = numpy.zeros_like(grid)
+ion_density = np.zeros_like(grid)
 accumulate_density(grid, object_mask, background_ion_density, largest_ion_index, ions, ion_density, \
 		       empty_ion_slots, current_empty_ion_slot)
-electron_density = numpy.zeros_like(grid)
-charge_density = numpy.zeros_like(grid)
-previous_charge_density = numpy.zeros_like(grid)
-charge_derivative = numpy.zeros_like(grid)
+electron_density = np.zeros_like(grid)
+charge_density = np.zeros_like(grid)
+previous_charge_density = np.zeros_like(grid)
+charge_derivative = np.zeros_like(grid)
 if not boltzmann_electrons:
     accumulate_density(grid, object_mask, background_electron_density, largest_electron_index, electrons, \
 			   electron_density, empty_electron_slots, current_empty_electron_slot)
@@ -354,17 +393,17 @@ if not boltzmann_electrons:
 # <codecell>
 
 %%px
-n_steps = 1000
+n_steps = 10
 storage_step = 1
 store_all_until_step = 100
-print_step = 100
+print_step = 1
 damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
 for k in range(n_steps):
 #    if k==1: # simulate moon by knocking out particles
 #        object_mask[0.45*n_cells:0.55*n_cells] = 1.
 #    else:
-#        object_mask = numpy.zeros_like(grid)
+#        object_mask = np.zeros_like(grid)
     comm.Allreduce(MPI.IN_PLACE, ion_density, op=MPI.SUM)
     if periodic_particles:
 	ion_density[0] += ion_density[-1]
@@ -373,7 +412,7 @@ for k in range(n_steps):
 	ion_density[0] *= 2. # half-cell at ends
 	ion_density[-1] *= 2. # half-cell at ends
     if boltzmann_electrons:
-	electron_density = numpy.exp(potential) # TODO: add electron temp. dep.
+	electron_density = np.exp(potential) # TODO: add electron temp. dep.
     else:
 	comm.Allreduce(MPI.IN_PLACE, electron_density, op=MPI.SUM)
 	if periodic_particles:
@@ -390,7 +429,7 @@ for k in range(n_steps):
     if prescribe_potential:
 	potential = prescribed_potential(grid,t)
     elif quasineutral:
-	potential = numpy.log(numpy.maximum(ion_density,numpy.exp(object_potential)*numpy.ones_like(ion_density))) # TODO: add electron temp. dep.
+	potential = np.log(np.maximum(ion_density,np.exp(object_potential)*np.ones_like(ion_density))) # TODO: add electron temp. dep.
 	potential[0] = 0.
 	potential[-1] = 0.
     else:
@@ -439,7 +478,7 @@ for k in range(n_steps):
 	    n_bins = 100
 	    ion_hist_v_edges = np.arange(v_min_i,v_max_i+eps,(v_max_i-v_min_i)/n_bins)
 	    ion_hist2d, ion_hist_n_edges, ion_hist_v_edges = \
-		numpy.histogram2d(ions[0][occupied_ion_slots], ions[1][occupied_ion_slots], \
+		np.histogram2d(ions[0][occupied_ion_slots], ions[1][occupied_ion_slots], \
 				      bins=[ion_hist_n_edges,ion_hist_v_edges]) # could use range=[[z_min,z_max],[v_min,v_max]]
 	    ion_hist2d = np.ascontiguousarray(ion_hist2d)
 	    comm.Allreduce(MPI.IN_PLACE, ion_hist2d, op=MPI.SUM)
@@ -451,20 +490,20 @@ for k in range(n_steps):
 		n_bins = 100
 		electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
 		electron_hist2d, electron_hist_n_edges, electron_hist_v_edges = \
-		    numpy.histogram2d(electrons[0][occupied_electron_slots], electrons[1][occupied_electron_slots], \
+		    np.histogram2d(electrons[0][occupied_electron_slots], electrons[1][occupied_electron_slots], \
 					  bins=[electron_hist_n_edges,electron_hist_v_edges]) # could use range=[[z_min,z_max],[v_min,v_max]]
 		electron_hist2d = np.ascontiguousarray(electron_hist2d)
 		comm.Allreduce(MPI.IN_PLACE, electron_hist2d, op=MPI.SUM)
     if ((k%storage_step==0 or k<store_all_until_step) and mpi_id==0):
         times.append(t)
-        object_masks.append(numpy.copy(object_mask))
-        ion_densities.append(numpy.copy(ion_density))
-	electron_densities.append(numpy.copy(electron_density))
-	charge_derivatives.append(numpy.copy(charge_derivative))
-        potentials.append(numpy.copy(potential))
-        ion_distribution_functions.append(numpy.copy(ion_hist2d))
+        object_masks.append(np.copy(object_mask))
+        ion_densities.append(np.copy(ion_density))
+	electron_densities.append(np.copy(electron_density))
+	charge_derivatives.append(np.copy(charge_derivative))
+        potentials.append(np.copy(potential))
+        ion_distribution_functions.append(np.copy(ion_hist2d))
 	if not boltzmann_electrons:
-	    electron_distribution_functions.append(numpy.copy(electron_hist2d))
+	    electron_distribution_functions.append(np.copy(electron_hist2d))
     if (k%print_step==0 and mpi_id==0):
 	print k
     move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
@@ -482,37 +521,37 @@ for k in range(n_steps):
 	n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
     # TODO: unify random number usage with sampler
-    if (expected_ion_injection-n_ions_inject)>numpy.random.rand():
+    if (expected_ion_injection-n_ions_inject)>np.random.rand():
 	n_ions_inject += 1
-    injection_numbers = numpy.zeros(n_engines,dtype=np.int32)
+    injection_numbers = np.zeros(n_engines,dtype=np.int32)
     injection_numbers[mpi_id] = n_ions_inject
     comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
     if uniform_2d_sampler.shared_seed:
 	for injection_number in injection_numbers[:mpi_id]:
-	    sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
+	    sample = np.asarray(uniform_2d_sampler.get(int(injection_number))).T
     if n_ions_inject>0 and not periodic_particles:
 	inject_particles(n_ions_inject, grid, dt, v_th_i, background_ion_density, \
 			     uniform_2d_sampler, ions, empty_ion_slots, \
 			     current_empty_ion_slot, largest_ion_index, ion_density)
     if uniform_2d_sampler.shared_seed:
 	for injection_number in injection_numbers[mpi_id+1:]:
-	    sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
+	    sample = np.asarray(uniform_2d_sampler.get(int(injection_number))).T
     if not boltzmann_electrons:
-	if (expected_electron_injection-n_electrons_inject)>numpy.random.rand():
+	if (expected_electron_injection-n_electrons_inject)>np.random.rand():
 	    n_electrons_inject += 1
-	injection_numbers = numpy.zeros(n_engines,dtype=np.int32)
+	injection_numbers = np.zeros(n_engines,dtype=np.int32)
 	injection_numbers[mpi_id] = n_electrons_inject
 	comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
 	if uniform_2d_sampler.shared_seed:
 	    for injection_number in injection_numbers[:mpi_id]:
-		sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
+		sample = np.asarray(uniform_2d_sampler.get(int(injection_number))).T
 	if n_electrons_inject>0 and not periodic_particles:
 	    inject_particles(n_electrons_inject, grid, dt, v_th_e, background_electron_density, \
 				 uniform_2d_sampler, electrons, empty_electron_slots, \
 				 current_empty_electron_slot, largest_electron_index, electron_density)
 	if uniform_2d_sampler.shared_seed:
 	    for injection_number in injection_numbers[mpi_id+1:]:
-		sample = numpy.asarray(uniform_2d_sampler.get(int(injection_number))).T
+		sample = np.asarray(uniform_2d_sampler.get(int(injection_number))).T
     t += dt
 if (mpi_id==0):
     print times[0], dt, times[len(times)-1]
@@ -521,18 +560,18 @@ if (mpi_id==0):
 
 %%px
 if (mpi_id==0):
-    times_np = numpy.array(times, dtype=numpy.float32)
-    object_masks_np = numpy.array(object_masks, dtype=numpy.float32)
-    potentials_np = numpy.array(potentials, dtype=numpy.float32)
-    ion_densities_np = numpy.array(ion_densities, dtype=numpy.float32)
-    electron_densities_np = numpy.array(electron_densities, dtype=numpy.float32)
-    charge_derivatives_np = numpy.array(charge_derivatives, dtype=numpy.float32)
-    ion_distribution_functions_np = numpy.array(ion_distribution_functions, dtype=numpy.float32) # actuall int
-    electron_distribution_functions_np = numpy.array(electron_distribution_functions, dtype=numpy.float32) # actuall int
+    times_np = np.array(times, dtype=np.float32)
+    object_masks_np = np.array(object_masks, dtype=np.float32)
+    potentials_np = np.array(potentials, dtype=np.float32)
+    ion_densities_np = np.array(ion_densities, dtype=np.float32)
+    electron_densities_np = np.array(electron_densities, dtype=np.float32)
+    charge_derivatives_np = np.array(charge_derivatives, dtype=np.float32)
+    ion_distribution_functions_np = np.array(ion_distribution_functions, dtype=np.float32) # actuall int
+    electron_distribution_functions_np = np.array(electron_distribution_functions, dtype=np.float32) # actuall int
     filename_base = \
 	'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
     print filename_base
-    numpy.savez(filename_base, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
+    np.savez(filename_base, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
 		    ion_densities=ion_densities_np, electron_densities=electron_densities_np, charge_derivatives=charge_derivatives_np, \
 		    ion_hist_n_edges=ion_hist_n_edges, ion_hist_v_edges=ion_hist_v_edges, \
 		    ion_distribution_functions=ion_distribution_functions_np, \
@@ -559,13 +598,13 @@ print n_engines
 
 # <codecell>
 
-mpi_ids = numpy.array(dview.pull('mpi_id'))
-master_rc_id = numpy.arange(0,len(mpi_ids))[mpi_ids==0][0]
+mpi_ids = np.array(dview.pull('mpi_id'))
+master_rc_id = np.arange(0,len(mpi_ids))[mpi_ids==0][0]
 
 # <codecell>
 
 filename = dview.pull('filename_base', targets=master_rc_id) + '.npz'
-data_file = numpy.load(filename)
+data_file = np.load(filename)
 print data_file.files
 grid = data_file['grid']
 times = data_file['times']
