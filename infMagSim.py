@@ -35,22 +35,23 @@ def execute_notebook(nbfile):
 
 %%px
 from mpi4py import MPI
-import io
-import math
-import numpy as np
-import matplotlib
-matplotlib.use('Agg') # non-GUI backend
-import matplotlib.pyplot
-#import ghalton
-from scipy.stats import norm
-from infMagSim_cython import *
+comm = MPI.COMM_WORLD
+mpi_id = comm.Get_rank()
+n_engines = comm.size
 
 # <codecell>
 
 %%px
-comm = MPI.COMM_WORLD
-mpi_id = comm.Get_rank()
-n_engines = comm.size
+import io
+import math
+import numpy as np
+if (mpi_id==0):
+    import matplotlib as mpl
+    mpl.use('Agg') # non-GUI backend
+    import mpl.pyplot as plt
+#import ghalton
+from scipy.stats import norm
+from infMagSim_cython import *
 
 # <codecell>
 
@@ -248,11 +249,11 @@ ion_hist_v, ion_hist_v_edges = np.histogram(ions[1][0:n_ions], bins=ion_hist_v_e
 comm.Allreduce(MPI.IN_PLACE, ion_hist_n, op=MPI.SUM)
 comm.Allreduce(MPI.IN_PLACE, ion_hist_v, op=MPI.SUM)
 if (mpi_id==0):
-    fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
+    fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
     for ax, data, bins in zip(axes,[ion_hist_n,ion_hist_v], [ion_hist_n_edges, ion_hist_v_edges]):
 	ax.step(bins,np.append(data,[0]), where='post')
     filename='initialIonDistribution.png'
-    matplotlib.pyplot.savefig(filename)
+    plt.savefig(filename)
 
 # <codecell>
 
@@ -329,11 +330,11 @@ if not boltzmann_electrons:
     comm.Allreduce(MPI.IN_PLACE, electron_hist_n, op=MPI.SUM)
     comm.Allreduce(MPI.IN_PLACE, electron_hist_v, op=MPI.SUM)
     if (mpi_id==0):
-	fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
+	fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
 	for ax, data, bins in zip(axes,[electron_hist_n,electron_hist_v], [electron_hist_n_edges, electron_hist_v_edges]):
 	    ax.step(bins,np.append(data,[0]), where='post')
 	    filename='initialElectronDistribution.png'
-	    matplotlib.pyplot.savefig(filename)
+	    plt.savefig(filename)
 
 # <codecell>
 
@@ -425,6 +426,12 @@ n_steps = 10
 storage_step = 1
 store_all_until_step = 100
 print_step = 1
+#mass_correction = math.sqrt(1./1836./mass_ratio)
+#debye_correction = 0.04/debye_length
+#n_steps = int(150000*mass_correction*debye_correction/8.)
+#storage_step = int(max(1,n_steps/100/mass_correction))
+#store_all_until_step = 0
+#print_step = storage_step
 damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
 for k in range(n_steps):
@@ -645,12 +652,12 @@ object_masks = data_file['object_masks']
 
 k = len(times)-1
 print times[k]
-fig, axes = matplotlib.pyplot.subplots(nrows=3,ncols=2,figsize=(8,6))
+fig, axes = plt.subplots(nrows=3,ncols=2,figsize=(8,6))
 for ax, data in zip(axes.flatten(),[potentials[k], ion_densities[k]-electron_densities[k], \
                               object_masks[k], object_masks[k], ion_densities[k], electron_densities[k]]):
     ax.plot(grid,data)
 filename='figures/data.png'
-matplotlib.pyplot.savefig(filename)
+plt.savefig(filename)
 IPdisp.Image(filename=filename)
 
 # <codecell>
@@ -685,26 +692,26 @@ gc.collect()
 
 # <codecell>
 
-fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
+fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
 for ax, data in zip(axes,electrons):
     n_bins = n_points;
     occupied_slots = (data==data)
     occupied_slots[empty_electron_slots[0:current_empty_electron_slot[0]+1]] = False
     ax.hist(data[occupied_slots],bins=n_bins, histtype='step')
 filename='data.png'
-matplotlib.pyplot.savefig(filename)
+plt.savefig(filename)
 IPdisp.Image(filename=filename)
 
 # <codecell>
 
-fig, axes = matplotlib.pyplot.subplots(nrows=1,ncols=2,figsize=(8,2))
+fig, axes = plt.subplots(nrows=1,ncols=2,figsize=(8,2))
 for ax, data in zip(axes,ions):
     n_bins = n_points;
     occupied_slots = (data==data)
     occupied_slots[empty_ion_slots[0:current_empty_ion_slot[0]+1]] = False
     ax.hist(data[occupied_slots],bins=n_bins, histtype='step')
 filename='data.png'
-matplotlib.pyplot.savefig(filename)
+plt.savefig(filename)
 IPdisp.Image(filename=filename)
 
 # <codecell>
