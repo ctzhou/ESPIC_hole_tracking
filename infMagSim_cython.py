@@ -301,6 +301,60 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
     for j in range(n_points):
         potential[j] = result_32[j]-average_potential
 
+def gauss_solve(np.ndarray[np.float32_t,ndim=1] grid, \
+                      np.ndarray[np.float32_t,ndim=1] charge, float debye_length, \
+                      np.ndarray[np.float32_t,ndim=1] electric_field, \
+                      int periodic_electric_field=False):
+    cdef float eps = 1.e-5
+    cdef int n_points = len(grid)
+    cdef float z_min = grid[0]
+    cdef float z_max = grid[n_points-1]
+    cdef float dz = grid[1]-grid[0]
+
+    #cdef np.ndarray[np.float64_t,ndim=1] diagonal = -np.ones(n_points,dtype=np.float64)
+    #cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal = np.zeros_like(diagonal)
+    #cdef np.ndarray[np.float64_t,ndim=1] upper_diagonal = np.ones_like(diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] diagonal = 4.*np.ones(n_points,dtype=np.float64)
+    cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal = -3.*np.ones_like(diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] upper_diagonal = -np.ones_like(diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] right_hand_side = np.zeros_like(diagonal)
+    #right_hand_side[0:n_points-1] = 1.*dz*charge.astype(np.float64)[0:n_points-1]/debye_length/debye_length
+    right_hand_side[1:n_points-2] = 2.*dz*charge.astype(np.float64)[0:n_points-3]/debye_length/debye_length
+    # Dirichlet left boundary
+    diagonal[0] = 1.
+    upper_diagonal[0] = 0.
+    right_hand_side[0] = 0.
+    cdef np.ndarray[np.float64_t,ndim=1] periodic_u = np.zeros(n_points,dtype=np.float64)
+    cdef np.ndarray[np.float64_t,ndim=1] periodic_v = np.zeros_like(periodic_u)
+    if periodic_electric_field:
+        # Enforce last element equal first
+        lower_diagonal[n_points-2] = 0.
+        diagonal[n_points-1] = 1.
+        right_hand_side[n_points-1] = 0.
+        # Use Sherman-Morrison formula for non-tidiagonal part
+        periodic_u[n_points-1] = 1.
+        periodic_v[0] = -1.
+    else:
+        # Dirichlet right boundary
+        lower_diagonal[n_points-2] = 0.
+        diagonal[n_points-1] = 1.
+        right_hand_side[n_points-1] = 0.
+    cdef np.ndarray[np.float64_t,ndim=1] result = np.zeros_like(diagonal)
+    cdef np.ndarray[np.float64_t,ndim=1] periodic_w = np.zeros_like(diagonal)
+    if periodic_electric_field:
+        # Use Sherman-Morrison formula to deal with non-tridiagonal part
+        tridiagonal_solve(lower_diagonal, diagonal, upper_diagonal, right_hand_side, result)
+        tridiagonal_solve(lower_diagonal, diagonal, upper_diagonal, periodic_u, periodic_w)
+        result = result - np.dot(periodic_v,result)/(1.+np.dot(periodic_v,periodic_w))*periodic_w
+    else:
+        tridiagonal_solve(lower_diagonal, diagonal, upper_diagonal, right_hand_side, result)
+    cdef np.ndarray[np.float32_t,ndim=1] result_32 = result.astype(np.float32)
+    cdef double average_electric_field = 0.
+    if periodic_electric_field:
+        average_electric_field = np.mean(result_32)
+    for j in range(n_points):
+        electric_field[j] = result_32[j]-average_electric_field
+
 cdef class sobol_sequencer:
     cdef gsl.gsl_qrng *quasi_random_generator
     #cdef gsl.gsl_rng *quasi_random_generator

@@ -48,7 +48,7 @@ import numpy as np
 if (mpi_id==0):
     import matplotlib as mpl
     mpl.use('Agg') # non-GUI backend
-    import mpl.pyplot as plt
+    import matplotlib.pyplot as plt
 #import ghalton
 from scipy.stats import norm
 from infMagSim_cython import *
@@ -70,6 +70,7 @@ def prescribed_potential(grid, t):
     z_min = grid[0]
     z_max = grid[-1]
     return min(1.,t/(z_max-z_min))*np.sin(2.*np.pi*grid/(z_max-z_min))
+solve_for_electric_field = False
 boltzmann_electrons = False
 quasineutral = False
 if quasineutral:
@@ -386,10 +387,12 @@ if include_object:
     circular_cross_section(grid,1.e-8,1.,1.,1.,object_center_mask)
 potential = np.zeros_like(grid)
 previous_potential = np.zeros_like(grid)
+electric_field = np.zeros_like(grid)
 
 if (mpi_id==0):
     object_masks = []
     potentials = []
+    electric_fields = []
     ion_densities = []
     electron_densities = []
     charge_derivatives = []
@@ -467,6 +470,10 @@ for k in range(n_steps):
 	potential = np.log(np.maximum(ion_density,np.exp(object_potential)*np.ones_like(ion_density))) # TODO: add electron temp. dep.
 	potential[0] = 0.
 	potential[-1] = 0.
+    elif solve_for_electric_field:
+        charge_density = ion_density-electron_density
+        gauss_solve(grid, charge_density, debye_length, electric_field, periodic_electric_field=periodic_potential)
+        np.cumsum(-electric_field*dz, out=potential)
     else:
 	if (dist_to_obj>0.):
 	    if include_object:
@@ -536,6 +543,7 @@ for k in range(n_steps):
 	electron_densities.append(np.copy(electron_density))
 	charge_derivatives.append(np.copy(charge_derivative))
         potentials.append(np.copy(potential))
+        electric_fields.append(np.copy(electric_field))
         ion_distribution_functions.append(np.copy(ion_hist2d))
 	if not boltzmann_electrons:
 	    electron_distribution_functions.append(np.copy(electron_hist2d))
@@ -598,6 +606,7 @@ if (mpi_id==0):
     times_np = np.array(times, dtype=np.float32)
     object_masks_np = np.array(object_masks, dtype=np.float32)
     potentials_np = np.array(potentials, dtype=np.float32)
+    electric_fields_np = np.array(electric_fields, dtype=np.float32)
     ion_densities_np = np.array(ion_densities, dtype=np.float32)
     electron_densities_np = np.array(electron_densities, dtype=np.float32)
     charge_derivatives_np = np.array(charge_derivatives, dtype=np.float32)
@@ -607,6 +616,7 @@ if (mpi_id==0):
 	'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
     print filename_base
     np.savez(filename_base, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
+                    electric_fields=electric_fields, \
 		    ion_densities=ion_densities_np, electron_densities=electron_densities_np, charge_derivatives=charge_derivatives_np, \
 		    ion_hist_n_edges=ion_hist_n_edges, ion_hist_v_edges=ion_hist_v_edges, \
 		    ion_distribution_functions=ion_distribution_functions_np, \
@@ -646,6 +656,7 @@ times = data_file['times']
 ion_densities = data_file['ion_densities']
 electron_densities = data_file['electron_densities']
 potentials = data_file['potentials']
+electric_fields = data_file['electric_fields']
 object_masks = data_file['object_masks']
 
 # <codecell>
