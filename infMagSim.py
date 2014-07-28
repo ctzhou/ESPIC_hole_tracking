@@ -60,6 +60,8 @@ smooth_ion_velocities = False
 read_electron_dist_from_file = read_ion_dist_from_file
 smooth_electron_velocities = smooth_ion_velocities
 dist_filename = '/home/chaako/analysis/runTmp/dist_func.npz'
+project_read_particles = False
+projection_angle = np.pi*5/16.
 periodic_particles = False
 periodic_potential = periodic_particles
 prescribe_potential = False
@@ -72,7 +74,7 @@ quasineutral = False
 if quasineutral:
     boltzmann_electrons = True
 use_quasirandom_numbers = False
-include_object = True
+include_object = False
 
 # <codecell>
 
@@ -136,8 +138,8 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
 # <codecell>
 
 %%px
-z_min = -50.
-z_max = 50.
+z_min = -5.
+z_max = 5.
 n_cells = 2000
 n_points = n_cells+1
 dz = (z_max-z_min)/(n_points-1)
@@ -221,6 +223,19 @@ if smooth_ion_velocities:
     if read_ion_dist_from_file:
 	ion_v_smoothing_scale = ion_v_edges[1]-ion_v_edges[0]
     ions[1][0:n_ions] += np.random.randn(n_ions)*ion_v_smoothing_scale
+if project_read_particles:
+    if uniform_2d_sampler.shared_seed:
+	for id in range(n_engines):
+	    sample = np.asarray(uniform_2d_sampler.get(n_ions)).T
+	    if id==mpi_id:
+		uniform_2d_sample = sample
+    else:
+	uniform_2d_sample = uniform_2d_sampler.get(n_ions).T
+    perpendicular_velocities = norm.ppf(uniform_2d_sample[1])*v_th_i
+    velocity_magnitudes = np.sqrt(ions[1][0:n_ions]*ions[1][0:n_ions]
+				  + perpendicular_velocities*perpendicular_velocities)
+    velocity_angles = np.arctan2(perpendicular_velocities, ions[1][0:n_ions])
+    ions[1][0:n_ions] = velocity_magnitudes*np.cos(velocity_angles-projection_angle)
 ions[0][n_ions:] = inactive_slot_position_flag
 # List remaining slots in reverse order to prevent memory fragmentation
 empty_ion_slots = -np.ones(ion_storage_length,dtype=np.int)
@@ -291,6 +306,19 @@ if not boltzmann_electrons:
 	if read_electron_dist_from_file:
 	    electron_v_smoothing_scale = electron_v_edges[1]-electron_v_edges[0]
 	electrons[1][0:n_electrons] += np.random.randn(n_electrons)*electron_v_smoothing_scale
+    if project_read_particles:
+	if uniform_2d_sampler.shared_seed:
+	    for id in range(n_engines):
+		sample = np.asarray(uniform_2d_sampler.get(n_electrons)).T
+		if id==mpi_id:
+		    uniform_2d_sample = sample
+	else:
+	    uniform_2d_sample = uniform_2d_sampler.get(n_electrons).T
+	perpendicular_velocities = norm.ppf(uniform_2d_sample[1])*v_th_e
+	velocity_magnitudes = np.sqrt(electrons[1][0:n_electrons]*electrons[1][0:n_electrons]
+				      + perpendicular_velocities*perpendicular_velocities)
+	velocity_angles = np.arctan2(perpendicular_velocities, electrons[1][0:n_electrons])
+	electrons[1][0:n_electrons] = velocity_magnitudes*np.cos(velocity_angles-projection_angle)
     electrons[0][n_electrons:] = inactive_slot_position_flag
     # List remaining slots in reverse order to prevent memory fragmentation
     empty_electron_slots = -np.ones(electron_storage_length,dtype=np.int)

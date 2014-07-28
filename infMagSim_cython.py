@@ -197,7 +197,7 @@ def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,
     right_hand_side[0:n_points-1] = charge.astype(np.float64)[0:n_points-1] # scale later
     if boltzmann_electrons:
         diagonal -= dz*dz*np.exp(potential)/debye_length/debye_length
-        right_hand_side -= np.exp(potential)*(np.ones_like(diagonal)-potential[1:n_points-1])
+        right_hand_side -= np.exp(potential)*(np.ones_like(diagonal)-potential)
     right_hand_side *= -dz*dz/debye_length/debye_length
     # Dirichlet left boundary
     diagonal[0] = 1.
