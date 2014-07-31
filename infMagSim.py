@@ -75,7 +75,8 @@ boltzmann_electrons = False
 quasineutral = False
 if quasineutral:
     boltzmann_electrons = True
-use_quasirandom_numbers = False
+use_quasirandom_numbers = True
+use_quasirandom_dimensions_for_parallelism = False
 include_object = False
 
 # <codecell>
@@ -155,24 +156,52 @@ if (mpi_id==0):
 %%px
 seed = 384+mpi_id*mpi_id*mpi_id
 class uniform_2d_sampler_class:
-    def __init__(self,seed,low_discrepancy=False,shared_seed=True,rand_dim=1):
+    def __init__(self,seed,low_discrepancy=False,shared_seed=True,rand_dim=1,parallel_dimensions=1,\
+		numbers_per_batch=10000000, mpi_id=0):
 	self.low_discrepancy = low_discrepancy
 	self.shared_seed = shared_seed
 	self.rand_dim = rand_dim
+	self.parallel_dimensions = parallel_dimensions
+	self.total_dim = rand_dim*parallel_dimensions
+	self.numbers_per_batch = numbers_per_batch
+	self.mpi_id = mpi_id
+	self.total_n = 0
 	if low_discrepancy:
 	    self.low_discrepancy = True
-	    #self.sequencer = ghalton.GeneralizedHalton(rand_dim,seed) # seed doesn't appear to do anything
-	    self.sequencer = sobol_sequencer(rand_dim=rand_dim)
+	    #self.sequencer = ghalton.GeneralizedHalton(self.total_dim,seed) # seed doesn't appear to do anything
+	    self.sequencer = sobol_sequencer(rand_dim=self.total_dim)
 	else:
 	    self.low_discrepancy = False
 	    np.random.seed(seed)
-    def get(self,n):
+    def get_n(self,n):
+	self.total_n = self.total_n + n
 	if self.low_discrepancy:
+	    if self.total_n>1e9:
+	        print "WARNING: low-discrepancy sequences may start returning bad values."
 	    return np.asarray(self.sequencer.get(n))
 	else:
-	    return np.random.rand(n,self.rand_dim)
+	    return np.random.rand(n,self.total_dim)
+    def get(self,n):
+	n_per_batch = int(self.numbers_per_batch/self.total_dim)
+	n_batches = max(1,n/n_per_batch)
+	numbers = np.zeros([n,self.rand_dim])
+	for i in range(n_batches):
+	    if i==n_batches-1:
+	        n_to_get = n-n_per_batch*(n_batches-1)
+	    else:
+		n_to_get = n_per_batch
+	    number_batch = self.get_n(n_to_get)
+	    for j in range(self.rand_dim):
+		numbers[i*n_per_batch:i*n_per_batch+n_to_get,j] = number_batch[:,self.parallel_dimensions*j+self.mpi_id]
+	return numbers
+
 if use_quasirandom_numbers:
-    uniform_2d_sampler = uniform_2d_sampler_class(seed,low_discrepancy=True,rand_dim=2)
+    if use_quasirandom_dimensions_for_parallelism:
+        uniform_2d_sampler = uniform_2d_sampler_class(seed,low_discrepancy=True,rand_dim=2,\
+			       shared_seed=False,parallel_dimensions=n_engines,mpi_id=mpi_id)
+    else:
+        uniform_2d_sampler = uniform_2d_sampler_class(seed,low_discrepancy=True,rand_dim=2,\
+			       shared_seed=True,parallel_dimensions=1)
 else:
     uniform_2d_sampler = uniform_2d_sampler_class(seed,shared_seed=False,rand_dim=2)
 
@@ -280,13 +309,13 @@ if not boltzmann_electrons:
     electrons = np.zeros([2,electron_storage_length],dtype=np.float32)
     #electrons[0][0:n_electrons] = np.random.rand(n_electrons)*(z_max-z_min) + z_min # positions
     if uniform_2d_sampler.shared_seed:
-	for id in range(n_engines):
+        for id in range(n_engines):
 	    sample = np.asarray(uniform_2d_sampler.get(n_electrons)).T
 	    if id==mpi_id:
-		uniform_2d_sample = sample
+	        uniform_2d_sample = sample
     else:
 	uniform_2d_sample = uniform_2d_sampler.get(n_electrons).T
-	electrons[0][0:n_electrons] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
+    electrons[0][0:n_electrons] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
     if (read_electron_dist_from_file):
 	dist_file = np.load(dist_filename)
 	electron_distribution_function = dist_file['electron_distribution_function']
@@ -437,11 +466,13 @@ print_step = 1
 #print_step = storage_step
 damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
+if (mpi_id==0):
+    print n_steps, n_steps*dt
 for k in range(n_steps):
-#    if k==1: # simulate moon by knocking out particles
-#        object_mask[0.45*n_cells:0.55*n_cells] = 1.
-#    else:
-#        object_mask = np.zeros_like(grid)
+    if k==1: # simulate moon by knocking out particles
+        object_mask[0.45*n_cells:0.55*n_cells] = 1.
+    else:
+        object_mask = np.zeros_like(grid)
     comm.Allreduce(MPI.IN_PLACE, ion_density, op=MPI.SUM)
     if periodic_particles:
 	ion_density[0] += ion_density[-1]

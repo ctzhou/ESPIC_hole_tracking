@@ -355,14 +355,21 @@ def gauss_solve(np.ndarray[np.float32_t,ndim=1] grid, \
     for j in range(n_points):
         electric_field[j] = result_32[j]-average_electric_field
 
+cdef extern from "gsl/gsl_qrng.h":
+    ctypedef struct gsl_qrng_type
+    gsl_qrng_type * gsl_qrng_halton
+    gsl_qrng_type * gsl_qrng_reversehalton
+
 cdef class sobol_sequencer:
     cdef gsl.gsl_qrng *quasi_random_generator
     #cdef gsl.gsl_rng *quasi_random_generator
     cdef int rand_dim
     def __init__(self, int rand_dim=1):
         self.rand_dim = rand_dim
-        cdef gsl.gsl_qrng_type *generator_type = gsl.gsl_qrng_sobol
+        #cdef gsl.gsl_qrng_type *generator_type = gsl.gsl_qrng_sobol
         #cdef gsl.gsl_qrng_type *generator_type = gsl.gsl_qrng_niederreiter_2
+        #cdef gsl_qrng_type *generator_type = gsl_qrng_halton
+        cdef gsl_qrng_type *generator_type = gsl_qrng_reversehalton
         #cdef gsl.gsl_rng_type *generator_type = gsl.gsl_rng_mt19937
         #cdef gsl.gsl_rng_type *generator_type = gsl.gsl_rng_ranlxs2
         #cdef gsl.gsl_rng_type *generator_type = gsl.gsl_rng_ranlxd2
