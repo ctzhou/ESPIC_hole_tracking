@@ -78,6 +78,7 @@ if quasineutral:
 use_quasirandom_numbers = True
 use_quasirandom_dimensions_for_parallelism = False
 include_object = False
+use_pure_c_mover = True
 
 # <codecell>
 
@@ -269,7 +270,7 @@ if project_read_particles:
     ions[1][0:n_ions] = velocity_magnitudes*np.cos(velocity_angles-projection_angle)
 ions[0][n_ions:] = inactive_slot_position_flag
 # List remaining slots in reverse order to prevent memory fragmentation
-empty_ion_slots = -np.ones(ion_storage_length,dtype=np.int)
+empty_ion_slots = -np.ones(ion_storage_length,dtype=np.int32)
 current_empty_ion_slot = [(ion_storage_length-n_ions)-1]
 empty_ion_slots[0:(current_empty_ion_slot[0]+1)] = range(ion_storage_length-1,n_ions-1,-1)
 ion_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
@@ -352,7 +353,7 @@ if not boltzmann_electrons:
 	electrons[1][0:n_electrons] = velocity_magnitudes*np.cos(velocity_angles-projection_angle)
     electrons[0][n_electrons:] = inactive_slot_position_flag
     # List remaining slots in reverse order to prevent memory fragmentation
-    empty_electron_slots = -np.ones(electron_storage_length,dtype=np.int)
+    empty_electron_slots = -np.ones(electron_storage_length,dtype=np.int32)
     current_empty_electron_slot = [(electron_storage_length-n_electrons)-1]
     empty_electron_slots[0:(current_empty_electron_slot[0]+1)] = range(electron_storage_length-1,n_electrons-1,-1)
     electron_hist_n, electron_hist_n_edges = np.histogram(electrons[0][0:n_electrons], bins=electron_hist_n_edges)
@@ -582,12 +583,13 @@ for k in range(n_steps):
 	print k
     move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
 		       background_ion_density, largest_ion_index, ions, ion_density, \
-		       empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles)
+		       empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles, \
+		       use_pure_c_version=use_pure_c_mover)
     if not boltzmann_electrons:
 	move_particles(grid, object_mask, potential, dt, electron_charge_to_mass, \
 			   background_electron_density, largest_electron_index, \
 			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot, \
-			   periodic_particles=periodic_particles)
+			   periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover)
     expected_ion_injection = 2*dt*v_th_i/math.sqrt(2*math.pi)*n_ions/(z_max-z_min)
     n_ions_inject = int(expected_ion_injection)
     if not boltzmann_electrons:

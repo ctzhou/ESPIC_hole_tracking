@@ -15,13 +15,44 @@ import math
 import cython_gsl as gsl
 cimport cython_gsl as gsl
 
-#@cython.boundscheck(False) # turn of bounds-checking for this function (no speed-up seen)
-#@cython.wraparound(False) # turn of negative indices for this function (no speed-up seen)
+cdef extern void move_particles_c(float *grid, float *object_mask, float *potential,
+                                  float dt, float charge_to_mass, float background_density, int largest_index,
+                                  float *particles, float *density, int *empty_slots,
+                                  int *current_empty_slot, int update_position, int periodic_particles,
+                                  int largest_allowed_slot, int n_points, int particle_storage_length)
+
 def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_t, ndim=1] object_mask, \
                        np.ndarray[np.float32_t, ndim=1] potential, \
                        float dt, float charge_to_mass, float background_density, largest_index_list, \
                        np.ndarray[np.float32_t, ndim=2] particles, np.ndarray[np.float32_t, ndim=1] density, \
-                       np.ndarray[np.int_t, ndim=1] empty_slots, \
+                       np.ndarray[np.int32_t, ndim=1] empty_slots, \
+                       current_empty_slot_list, int update_position=True, int periodic_particles=False, \
+                       int use_pure_c_version=False):
+    cdef int largest_index = largest_index_list[0]
+    cdef int current_empty_slot = current_empty_slot_list[0]
+    cdef int largest_allowed_slot = len(empty_slots)-1
+    if (update_position and (len(empty_slots)<1 or current_empty_slot<0)):
+        print 'move_particles needs list of empty particle slots'
+    cdef int n_points = len(grid)
+    cdef int particle_storage_length = len(particles[0])
+    if use_pure_c_version:
+        move_particles_c(&grid[0], &object_mask[0], &potential[0], dt, charge_to_mass, background_density,\
+                             largest_index, &particles[0,0], &density[0], <int*> &empty_slots[0], \
+                             &current_empty_slot, update_position, periodic_particles,\
+                             largest_allowed_slot, n_points, particle_storage_length)
+        current_empty_slot_list[0] = current_empty_slot
+    else:
+        move_particles_cython(grid, object_mask, potential, dt, charge_to_mass, background_density,\
+                                  largest_index_list, particles, density, empty_slots, \
+                                  current_empty_slot_list, update_position, periodic_particles)
+
+#@cython.boundscheck(False) # turn of bounds-checking for this function (no speed-up seen)
+#@cython.wraparound(False) # turn of negative indices for this function (no speed-up seen)
+def move_particles_cython(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_t, ndim=1] object_mask, \
+                       np.ndarray[np.float32_t, ndim=1] potential, \
+                       float dt, float charge_to_mass, float background_density, largest_index_list, \
+                       np.ndarray[np.float32_t, ndim=2] particles, np.ndarray[np.float32_t, ndim=1] density, \
+                       np.ndarray[np.int32_t, ndim=1] empty_slots, \
                        current_empty_slot_list, int update_position=True, int periodic_particles=False):
     cdef int largest_index = largest_index_list[0]
     cdef int current_empty_slot = current_empty_slot_list[0]
@@ -47,7 +78,7 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
     for i in range(largest_index+1):
         if periodic_particles:
             within_bounds = particles[0,i]<0.99*inactive_slot_position_flag
-            particles[0,i] = (particles[0,i]-z_min) % (z_max-z_min) + z_min
+            particles[0,i] = math.fmod(particles[0,i]-z_min,z_max-z_min) + z_min
         else:
             within_bounds = (particles[0,i]>z_min+eps and particles[0,i]<z_max-eps)
         within_bounds_before_move = within_bounds
@@ -65,7 +96,7 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                 particles[0,i] += particles[1,i]*dt
                 if periodic_particles:
                     within_bounds = particles[0,i]<0.99*inactive_slot_position_flag
-                    particles[0,i] = (particles[0,i]-z_min) % (z_max-z_min) + z_min
+                    particles[0,i] = math.fmod(particles[0,i]-z_min,z_max-z_min) + z_min
                 else:
                     within_bounds = (particles[0,i]>z_min+eps and particles[0,i]<z_max-eps)
                 if within_bounds:
@@ -74,7 +105,10 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                         left_index = 0
                     if (left_index<0 or left_index>n_points-2):
                         print 'bad left_index:', left_index, z_min, particles[0,i], z_max
-                    fraction_to_left = ( particles[0,i] % dz )/dz
+                    if (particles[0,i]>0):
+                        fraction_to_left = math.fmod(particles[0,i],dz)/dz
+                    else:
+                        fraction_to_left = 1.+math.fmod(particles[0,i],dz)/dz
                     current_potential = potential[left_index]*fraction_to_left + \
                         potential[left_index+1]*(1.-fraction_to_left)
         if within_bounds:
@@ -93,7 +127,10 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                     print 'bad current_empty_slot:', current_empty_slot, largest_allowed_slot
                 empty_slots[current_empty_slot] = i
             else:
-                fraction_to_left = ( particles[0,i] % dz )/dz
+                if (particles[0,i]>0):
+                    fraction_to_left = math.fmod(particles[0,i],dz)/dz
+                else:
+                    fraction_to_left = 1.+math.fmod(particles[0,i],dz)/dz
                 density[left_index] += fraction_to_left/background_density
                 density[left_index+1] += (1-fraction_to_left)/background_density
     largest_index_list[0] = largest_index
@@ -121,7 +158,7 @@ def draw_velocities(uniform_sample,v_th,v_d=0):
 
 def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float dt, float v_th, float background_density, \
                          uniform_2d_sampler, \
-                         np.ndarray[np.float32_t,ndim=2] particles, np.ndarray[np.int_t,ndim=1] empty_slots, \
+                         np.ndarray[np.float32_t,ndim=2] particles, np.ndarray[np.int32_t,ndim=1] empty_slots, \
                          current_empty_slot_list, largest_index_list, np.ndarray[np.float32_t, ndim=1] density):
     cdef int largest_index = largest_index_list[0]
     cdef int current_empty_slot = current_empty_slot_list[0]
@@ -157,7 +194,7 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
         if (left_index<0 or left_index>n_points-2):
             print 'bad left_index:', left_index, z_min, particles[0,i], z_max, particles[1,i], partial_dt[l]
         else:
-            fraction_to_left = ( particles[0,i] % dz )/dz
+            fraction_to_left = math.fmod(particles[0,i],dz)/dz
             density[left_index] += fraction_to_left/background_density
             density[left_index+1] += (1-fraction_to_left)/background_density
             empty_slots[current_empty_slot] = -1
