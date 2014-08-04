@@ -20,6 +20,7 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
   float electric_field;
   float accel;
   float fraction_to_left;
+  float position_offset;
   //float current_potential;
   int i;
   for (i=0; i<largest_index+1; i++) {
@@ -27,7 +28,12 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
     int iv = particle_storage_length+i;
     if (periodic_particles) {
       within_bounds = particles[ix]<0.99*inactive_slot_position_flag;
-      particles[ix] = fmodf(particles[ix]-z_min,z_max-z_min) + z_min;
+      position_offset = fmodf(particles[ix]-z_min,z_max-z_min);
+      if (position_offset>=0.) {
+	particles[ix] = position_offset + z_min;
+      } else {
+	particles[ix] = position_offset + z_max;
+      }
     } else {
       within_bounds = (particles[ix]>z_min+eps) && (particles[ix]<z_max-eps);
     }
@@ -38,7 +44,7 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
       if (periodic_particles && left_index>n_points-2)
 	left_index = 0;
       if (left_index<0 || left_index>n_points-2)
-	printf("bad left_index: %d, %f, %f, %f", left_index, z_min, particles[ix], z_max);
+	printf("bad left_index: %d, %f, %f, %f\n", left_index, z_min, particles[ix], z_max);
       electric_field = -(potential[left_index+1]-potential[left_index])/dz;
       accel = charge_to_mass*electric_field;
       particles[iv] += accel*dt;
@@ -46,7 +52,12 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
 	particles[ix] += particles[iv]*dt;
 	if (periodic_particles) {
 	  within_bounds = particles[ix]<0.99*inactive_slot_position_flag;
-	  particles[ix] = fmodf(particles[ix]-z_min,z_max-z_min) + z_min;
+	  position_offset = fmodf(particles[ix]-z_min,z_max-z_min);
+	  if (position_offset>=0.) {
+	    particles[ix] = position_offset + z_min;
+	  } else {
+	    particles[ix] = position_offset + z_max;
+	  }
 	} else {
 	  within_bounds = (particles[ix]>z_min+eps) && (particles[ix]<z_max-eps);
 	}
@@ -55,7 +66,7 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
 	  if (periodic_particles && left_index>n_points-2)
 	    left_index = 0;
 	  if (left_index<0 || left_index>n_points-2)
-	    printf("bad left_index: %d, %f, %f, %f", left_index, z_min, particles[ix], z_max);
+	    printf("bad left_index: %d, %f, %f, %f\n", left_index, z_min, particles[ix], z_max);
 	  if (particles[ix]>0) {
 	    fraction_to_left = fmodf(particles[ix],dz)/dz;
 	  } else {
@@ -82,7 +93,7 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
 	particles[ix] = inactive_slot_position_flag;
 	*current_empty_slot += 1;
 	if (*current_empty_slot>largest_allowed_slot)
-	  printf("bad current_empty_slot: %d, %d", *current_empty_slot, largest_allowed_slot);
+	  printf("bad current_empty_slot: %d, %d\n", *current_empty_slot, largest_allowed_slot);
 	empty_slots[*current_empty_slot] = i;
       } else {
 	if (particles[ix]>0) {
@@ -217,7 +228,7 @@ void poisson_solve_c(float *grid, float *object_mask, float *charge, float debye
 	  upper_diagonal_obj[j] = -2.*(1.-zeta_right/dz);
 	  right_hand_side_obj[j] = -2.*object_potential;
 	} else {
-	  printf("bad object_mask1");
+	  printf("bad object_mask1\n");
 	}
       } else if (object_mask[j]>1.-eps) {
 	if (object_mask[j-1]<1.-eps) {
@@ -231,10 +242,10 @@ void poisson_solve_c(float *grid, float *object_mask, float *charge, float debye
 	  // Interior point
 	  right_hand_side_obj[j] = 0.; // Constant derivative inside object (hopefully zero)
 	} else {
-	  printf("bad object_mask2");
+	  printf("bad object_mask2\n");
 	}
       } else {
-	printf("bad object_mask3");
+	printf("bad object_mask3\n");
       }
     } else if (object_mask[j-1]>0.) {
       // right closest point outside

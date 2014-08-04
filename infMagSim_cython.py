@@ -73,12 +73,17 @@ def move_particles_cython(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.f
     cdef float electric_field
     cdef float accel
     cdef float fraction_to_left
+    cdef float position_offset
     cdef float current_potential=0.
     cdef int i
     for i in range(largest_index+1):
         if periodic_particles:
             within_bounds = particles[0,i]<0.99*inactive_slot_position_flag
-            particles[0,i] = math.fmod(particles[0,i]-z_min,z_max-z_min) + z_min
+            position_offset = math.fmod(particles[0,i]-z_min,z_max-z_min)
+            if position_offset>=0.:
+                particles[0,i] = position_offset + z_min
+            else:
+                particles[0,i] = position_offset + z_max
         else:
             within_bounds = (particles[0,i]>z_min+eps and particles[0,i]<z_max-eps)
         within_bounds_before_move = within_bounds
@@ -96,7 +101,11 @@ def move_particles_cython(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.f
                 particles[0,i] += particles[1,i]*dt
                 if periodic_particles:
                     within_bounds = particles[0,i]<0.99*inactive_slot_position_flag
-                    particles[0,i] = math.fmod(particles[0,i]-z_min,z_max-z_min) + z_min
+                    position_offset = math.fmod(particles[0,i]-z_min,z_max-z_min)
+                    if position_offset>=0.:
+                        particles[0,i] = position_offset + z_min
+                    else:
+                        particles[0,i] = position_offset + z_max
                 else:
                     within_bounds = (particles[0,i]>z_min+eps and particles[0,i]<z_max-eps)
                 if within_bounds:
