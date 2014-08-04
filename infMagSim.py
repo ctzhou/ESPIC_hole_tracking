@@ -79,6 +79,7 @@ use_quasirandom_numbers = True
 use_quasirandom_dimensions_for_parallelism = False
 include_object = False
 use_pure_c_mover = True
+use_pure_c_solver = use_pure_c_mover
 
 # <codecell>
 
@@ -532,7 +533,8 @@ for k in range(n_steps):
 		poisson_solve(grid, object_center_mask, charge_density+damping_factor*charge_derivative, \
 				  debye_length, potential, \
 				  object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot), \
-				  boltzmann_electrons=boltzmann_electrons, periodic_potential=periodic_potential)
+				  boltzmann_electrons=boltzmann_electrons, periodic_potential=periodic_potential, \
+				  use_pure_c_version=use_pure_c_solver)
 		max_potential_change = np.amax(np.fabs(potential-previous_potential))
 		previous_potential[:] = potential[:]
 		if max_potential_change<potential_convergence_threshold:
@@ -543,7 +545,8 @@ for k in range(n_steps):
 	else:
 	    fraction_of_obj_pot = 1.
 	    poisson_solve(grid, object_mask, ion_density-electron_density, debye_length, potential, \
-			      object_potential=object_potential, object_transparency=0.)
+			      object_potential=object_potential, object_transparency=0., \
+			      use_pure_c_version=use_pure_c_solver)
     if (k%storage_step==0 or k<store_all_until_step):
 	    occupied_ion_slots = (ions[0]==ions[0])
 	    occupied_ion_slots[empty_ion_slots[0:current_empty_ion_slot[0]+1]] = False

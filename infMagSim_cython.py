@@ -202,6 +202,8 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     largest_index_list[0] = largest_index
     current_empty_slot_list[0] = current_empty_slot
 
+cdef extern void tridiagonal_solve_c(double *a, double *b, double *c, double *d, double *x, int n)
+
 def tridiagonal_solve(np.ndarray[np.float64_t,ndim=1] a, np.ndarray[np.float64_t,ndim=1] b, \
                           np.ndarray[np.float64_t,ndim=1] c, np.ndarray[np.float64_t,ndim=1] d, \
                           np.ndarray[np.float64_t,ndim=1] x): # also modifies b and d
@@ -216,7 +218,25 @@ def tridiagonal_solve(np.ndarray[np.float64_t,ndim=1] a, np.ndarray[np.float64_t
     for j in range(n):
         x[j] = d[j]/b[j]
 
+cdef extern void poisson_solve_c(float *grid, float *object_mask, float *charge, float debye_length, \
+                                     float *potential, float object_potential, float object_transparency, \
+                                     int boltzmann_electrons, int periodic_potential, int n_points)
+
 def poisson_solve(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,ndim=1] object_mask, \
+                      np.ndarray[np.float32_t,ndim=1] charge, float debye_length, \
+                      np.ndarray[np.float32_t,ndim=1] potential, float object_potential=-4., \
+                      float object_transparency=1., int boltzmann_electrons=False, int periodic_potential=False, \
+                      int use_pure_c_version=False):
+    ## if boltzmann_electrons then charge=ion_charge
+    cdef int n_points = len(grid)
+    if use_pure_c_version:
+        poisson_solve_c(&grid[0], &object_mask[0], &charge[0], debye_length, &potential[0], object_potential, \
+                             object_transparency, boltzmann_electrons, periodic_potential, n_points)
+    else:
+        poisson_solve_cython(grid, object_mask, charge, debye_length, potential, object_potential, \
+                                 object_transparency, boltzmann_electrons, periodic_potential)
+
+def poisson_solve_cython(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,ndim=1] object_mask, \
                       np.ndarray[np.float32_t,ndim=1] charge, float debye_length, \
                       np.ndarray[np.float32_t,ndim=1] potential, float object_potential=-4., \
                       float object_transparency=1., int boltzmann_electrons=False, int periodic_potential=False):
