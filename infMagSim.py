@@ -75,7 +75,8 @@ boltzmann_electrons = False
 quasineutral = False
 if quasineutral:
     boltzmann_electrons = True
-use_quasirandom_numbers = True
+quiet_start_and_injection = True
+use_quasirandom_numbers = False
 use_quasirandom_dimensions_for_parallelism = False
 include_object = False
 use_pure_c_mover = True
@@ -150,8 +151,15 @@ n_points = n_cells+1
 dz = (z_max-z_min)/(n_points-1)
 eps = 1e-5
 grid = np.arange(z_min,z_max+eps,dz,dtype=np.float32)
+if quasineutral:
+    debye_length = dz
+else:
+    debye_length = 0.125
+number_of_debye_lengths_across = int((z_max-z_min)/debye_length)
+number_of_uniforming_bins = number_of_debye_lengths_across*4
+number_per_injection_batch = 100
 if (mpi_id==0):
-    print dz
+    print dz, debye_length
 
 # <codecell>
 
@@ -196,6 +204,49 @@ class uniform_2d_sampler_class:
 	    for j in range(self.rand_dim):
 		numbers[i*n_per_batch:i*n_per_batch+n_to_get,j] = number_batch[:,self.parallel_dimensions*j+self.mpi_id]
 	return numbers
+    def get_uniform(self,n,n_bins):
+	samples = self.get(n)
+	samples[:,0] = (np.arange(n)+samples[:,0])/float(n)
+	# TODO: avoid each engine having extra samples in the same bins (might not matter since just for velocity smoothing)
+	sample_bins = np.arange(0.,float(n_bins),float(n_bins)/float(n)).astype(np.int32)
+	number_in_bins = np.bincount(sample_bins)
+	for i in range(1,self.rand_dim):
+	    for j in range(n_bins):
+		bin_width = 1./number_in_bins[j]
+		current_indices = (sample_bins==j)
+		samples[current_indices,i] = \
+		    np.random.permutation((np.arange(number_in_bins[j])+samples[current_indices,i])*bin_width)
+	return samples
+
+class injection_sampler_class:
+    def __init__(self,sampler,n_per_batch):
+	self.sampler = sampler
+	self.shared_seed = sampler.shared_seed
+	self.n_per_batch = n_per_batch
+	self.n_left_in_batch = 0
+	self.samples = np.zeros([0,sampler.rand_dim])
+    def get(self,n):
+	if self.n_left_in_batch<n:
+	    n_extra = n - self.n_left_in_batch
+	    n_batches = int(math.ceil(float(n_extra)/float(self.n_per_batch)))
+	    n_to_draw = n_batches*self.n_per_batch
+	    self.n_left_in_batch = n_to_draw - n_extra
+	    bin_width = 1./self.n_per_batch
+	    samples = self.sampler.get(n_to_draw)
+	    for i in range(1,self.sampler.rand_dim):
+		for j in range(n_batches):
+		    current_indices = slice(j*self.n_per_batch,(j+1)*self.n_per_batch)
+		    samples[current_indices,i] = \
+			np.random.permutation((np.arange(self.n_per_batch)+samples[current_indices,i])*bin_width)
+	    samples = np.concatenate((self.samples,samples))
+	else:
+	    samples = self.samples
+	    self.n_left_in_batch = self.n_left_in_batch - n
+	if self.n_left_in_batch>0:
+	    self.samples = samples[-self.n_left_in_batch:]
+	else:
+	    self.samples = np.zeros([0,sampler.rand_dim])
+	return samples[:n]
 
 if use_quasirandom_numbers:
     if use_quasirandom_dimensions_for_parallelism:
@@ -206,6 +257,11 @@ if use_quasirandom_numbers:
 			       shared_seed=True,parallel_dimensions=1)
 else:
     uniform_2d_sampler = uniform_2d_sampler_class(seed,shared_seed=False,rand_dim=2)
+
+if quiet_start_and_injection:
+    injection_sampler = injection_sampler_class(uniform_2d_sampler,number_per_injection_batch)
+else:
+    injection_sampler = uniform_2d_sampler
 
 # <codecell>
 
@@ -232,6 +288,8 @@ if uniform_2d_sampler.shared_seed:
 	sample = np.asarray(uniform_2d_sampler.get(n_ions)).T
 	if id==mpi_id:
 	    uniform_2d_sample = sample
+elif quiet_start_and_injection:
+    uniform_2d_sample = uniform_2d_sampler.get_uniform(n_ions,number_of_uniforming_bins).T
 else:
     uniform_2d_sample = uniform_2d_sampler.get(n_ions).T
 ions[0][0:n_ions] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
@@ -262,6 +320,8 @@ if project_read_particles:
 	    sample = np.asarray(uniform_2d_sampler.get(n_ions)).T
 	    if id==mpi_id:
 		uniform_2d_sample = sample
+    elif quiet_start_and_injection:
+	uniform_2d_sample = uniform_2d_sampler.get_uniform(n_ions,number_of_uniforming_bins).T
     else:
 	uniform_2d_sample = uniform_2d_sampler.get(n_ions).T
     perpendicular_velocities = norm.ppf(uniform_2d_sample[1])*v_th_i
@@ -315,6 +375,8 @@ if not boltzmann_electrons:
 	    sample = np.asarray(uniform_2d_sampler.get(n_electrons)).T
 	    if id==mpi_id:
 	        uniform_2d_sample = sample
+    elif quiet_start_and_injection:
+	uniform_2d_sample = uniform_2d_sampler.get_uniform(n_electrons,number_of_uniforming_bins).T
     else:
 	uniform_2d_sample = uniform_2d_sampler.get(n_electrons).T
     electrons[0][0:n_electrons] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
@@ -345,6 +407,8 @@ if not boltzmann_electrons:
 		sample = np.asarray(uniform_2d_sampler.get(n_electrons)).T
 		if id==mpi_id:
 		    uniform_2d_sample = sample
+	elif quiet_start_and_injection:
+	    uniform_2d_sample = uniform_2d_sampler.get_uniform(n_electrons,number_of_uniforming_bins).T
 	else:
 	    uniform_2d_sample = uniform_2d_sampler.get(n_electrons).T
 	perpendicular_velocities = norm.ppf(uniform_2d_sample[1])*v_th_e
@@ -393,10 +457,6 @@ if not boltzmann_electrons:
 
 %%px
 v_drift = 0.125*v_th_i
-if quasineutral:
-    debye_length = dz
-else:
-    debye_length = 0.125
 pot_transp_elong = 2.
 object_radius = 1.
 t_object_center = (1.+4.*pot_transp_elong*debye_length)/v_drift
@@ -605,32 +665,32 @@ for k in range(n_steps):
     injection_numbers = np.zeros(n_engines,dtype=np.int32)
     injection_numbers[mpi_id] = n_ions_inject
     comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
-    if uniform_2d_sampler.shared_seed:
+    if injection_sampler.shared_seed:
 	for injection_number in injection_numbers[:mpi_id]:
-	    sample = np.asarray(uniform_2d_sampler.get(int(injection_number))).T
+	    sample = np.asarray(injection_sampler.get(int(injection_number))).T
     if n_ions_inject>0 and not periodic_particles:
 	inject_particles(n_ions_inject, grid, dt, v_th_i, background_ion_density, \
-			     uniform_2d_sampler, ions, empty_ion_slots, \
+			     injection_sampler, ions, empty_ion_slots, \
 			     current_empty_ion_slot, largest_ion_index, ion_density)
-    if uniform_2d_sampler.shared_seed:
+    if injection_sampler.shared_seed:
 	for injection_number in injection_numbers[mpi_id+1:]:
-	    sample = np.asarray(uniform_2d_sampler.get(int(injection_number))).T
+	    sample = np.asarray(injection_sampler.get(int(injection_number))).T
     if not boltzmann_electrons:
 	if (expected_electron_injection-n_electrons_inject)>np.random.rand():
 	    n_electrons_inject += 1
 	injection_numbers = np.zeros(n_engines,dtype=np.int32)
 	injection_numbers[mpi_id] = n_electrons_inject
 	comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
-	if uniform_2d_sampler.shared_seed:
+	if injection_sampler.shared_seed:
 	    for injection_number in injection_numbers[:mpi_id]:
-		sample = np.asarray(uniform_2d_sampler.get(int(injection_number))).T
+		sample = np.asarray(injection_sampler.get(int(injection_number))).T
 	if n_electrons_inject>0 and not periodic_particles:
 	    inject_particles(n_electrons_inject, grid, dt, v_th_e, background_electron_density, \
-				 uniform_2d_sampler, electrons, empty_electron_slots, \
+				 injection_sampler, electrons, empty_electron_slots, \
 				 current_empty_electron_slot, largest_electron_index, electron_density)
-	if uniform_2d_sampler.shared_seed:
+	if injection_sampler.shared_seed:
 	    for injection_number in injection_numbers[mpi_id+1:]:
-		sample = np.asarray(uniform_2d_sampler.get(int(injection_number))).T
+		sample = np.asarray(injection_sampler.get(int(injection_number))).T
     t += dt
 if (mpi_id==0):
     print times[0], dt, times[len(times)-1]
