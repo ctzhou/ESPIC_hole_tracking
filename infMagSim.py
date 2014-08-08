@@ -245,7 +245,7 @@ class injection_sampler_class:
 	if self.n_left_in_batch>0:
 	    self.samples = samples[-self.n_left_in_batch:]
 	else:
-	    self.samples = np.zeros([0,sampler.rand_dim])
+	    self.samples = np.zeros([0,self.sampler.rand_dim])
 	return samples[:n]
 
 if use_quasirandom_numbers:
