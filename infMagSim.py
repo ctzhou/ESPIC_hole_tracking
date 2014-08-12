@@ -305,7 +305,11 @@ if (read_ion_dist_from_file):
 	(1.-left_edge_weights)*ion_v_edges[ion_sample_bins+1]
 else:
     #ions[1][0:n_ions] = np.random.randn(n_ions)*v_th_i + v_d_i # velocities
-    ions[1][0:n_ions] = norm.ppf(uniform_2d_sample[1])*v_th_i + v_d_i # velocities
+    #ions[1][0:n_ions] = norm.ppf(uniform_2d_sample[1])*v_th_i + v_d_i # velocities
+    ions[1,0:n_ions] = uniform_2d_sample[1] # velocities
+    inverse_gaussian_cdf_in_place(ions[1,0:n_ions]) # velocities
+    ions[1,0:n_ions] *= v_th_i # velocities
+    ions[1,0:n_ions] += v_d_i # velocities
     #ions[2][0:n_ions] = np.ones(n_ions) # active slots
     #ions[2][0:n_ions] = np.ones(n_ions,dtype=np.float32) # relative weights
 if smooth_ion_velocities:
@@ -392,7 +396,11 @@ if not boltzmann_electrons:
 	    (1.-left_edge_weights)*electron_v_edges[electron_sample_bins+1]
     else:
 	#electrons[1][0:n_electrons] = np.random.randn(n_electrons)*v_th_e + v_d_e # velocities
-	electrons[1][0:n_electrons] = norm.ppf(uniform_2d_sample[1])*v_th_e + v_d_e # velocities
+	#electrons[1][0:n_electrons] = norm.ppf(uniform_2d_sample[1])*v_th_e + v_d_e # velocities
+	electrons[1,0:n_electrons] = uniform_2d_sample[1] # velocities
+	inverse_gaussian_cdf_in_place(electrons[1,0:n_electrons]) # velocities
+	electrons[1,0:n_electrons] *= v_th_e # velocities
+	electrons[1,0:n_electrons] += v_d_e # velocities
 	#electrons[2][0:n_electrons] = np.ones(n_electrons) # active slots
 	#electrons[2][0:n_electrons] = np.ones(n_electrons,dtype=np.float32) # relative weights
     if smooth_electron_velocities:
@@ -512,6 +520,7 @@ if not boltzmann_electrons:
     initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, largest_electron_index, electrons, \
 			 empty_electron_slots, current_empty_electron_slot, \
 			 periodic_particles=periodic_particles)
+injection_numbers = np.zeros(n_engines,dtype=np.int32)
 
 # <codecell>
 
@@ -533,7 +542,7 @@ if (mpi_id==0):
 for k in range(n_steps):
     if k==1: # simulate moon by knocking out particles
         object_mask[0.45*n_cells:0.55*n_cells] = 1.
-    else:
+    elif k==2:
         object_mask = np.zeros_like(grid)
     comm.Allreduce(MPI.IN_PLACE, ion_density, op=MPI.SUM)
     if periodic_particles:
@@ -564,7 +573,7 @@ for k in range(n_steps):
 	potential[0] = 0.
 	potential[-1] = 0.
     elif solve_for_electric_field:
-        charge_density = ion_density-electron_density
+        np.subtract(ion_density,electron_density,out=charge_density)
         gauss_solve(grid, charge_density, debye_length, electric_field, periodic_electric_field=periodic_potential)
         np.cumsum(-electric_field*dz, out=potential)
     else:
@@ -574,29 +583,34 @@ for k in range(n_steps):
 	    else:
 		fraction_of_obj_pot = 0.
 	    object_potential *= math.exp(-dist_to_obj/(pot_transp_elong*debye_length))
-	    if k>=damping_start_step and k<damping_end_step:
-		damping_factor = dt/2.
-	    else:
-		damping_factor = 0.
-	    charge_density = ion_density-electron_density
-	    charge_derivative = (charge_density-previous_charge_density)/dt
-	    previous_charge_density = charge_density
+	    np.subtract(ion_density,electron_density,out=charge_density)
+	    np.subtract(charge_density,previous_charge_density,out=charge_derivative)
+	    charge_derivative /= dt
+	    np.copyto(previous_charge_density,charge_density)
 	    if boltzmann_electrons:
-		charge_density = ion_density
+		np.copyto(charge_density,ion_density) # TODO: could just make reference
 		max_potential_iter = 20
 	    else:
 		max_potential_iter = 1
+	    if k>=damping_start_step and k<damping_end_step:
+		damping_factor = dt/2.
+		charge_derivative *= damping_factor
+		charge_density += charge_derivative
+	    else:
+		damping_factor = 0.
 	    potential_iter = 0
 	    potential_converged = False
 	    potential_convergence_threshold = 0.0001
 	    while (not potential_converged and potential_iter<max_potential_iter):
-		poisson_solve(grid, object_center_mask, charge_density+damping_factor*charge_derivative, \
+		poisson_solve(grid, object_center_mask, charge_density, \
 				  debye_length, potential, \
 				  object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot), \
 				  boltzmann_electrons=boltzmann_electrons, periodic_potential=periodic_potential, \
 				  use_pure_c_version=use_pure_c_solver)
-		max_potential_change = np.amax(np.fabs(potential-previous_potential))
-		previous_potential[:] = potential[:]
+		np.subtract(potential,previous_potential,out=previous_potential)
+		np.absolute(previous_potential,out=previous_potential)
+		max_potential_change = np.amax(previous_potential)
+		np.copyto(previous_potential,potential)
 		if max_potential_change<potential_convergence_threshold:
 		    potential_converged = True
 		potential_iter += 1
@@ -604,7 +618,8 @@ for k in range(n_steps):
 #		print potential_iter, max_potential_change
 	else:
 	    fraction_of_obj_pot = 1.
-	    poisson_solve(grid, object_mask, ion_density-electron_density, debye_length, potential, \
+	    np.subtract(ion_density,electron_density,out=charge_density)
+	    poisson_solve(grid, object_mask, charge_density, debye_length, potential, \
 			      object_potential=object_potential, object_transparency=0., \
 			      use_pure_c_version=use_pure_c_solver)
     if (k%storage_step==0 or k<store_all_until_step):
@@ -662,9 +677,11 @@ for k in range(n_steps):
     # TODO: unify random number usage with sampler
     if (expected_ion_injection-n_ions_inject)>np.random.rand():
 	n_ions_inject += 1
-    injection_numbers = np.zeros(n_engines,dtype=np.int32)
-    injection_numbers[mpi_id] = n_ions_inject
-    comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
+    #injection_numbers[:] = 0
+    #injection_numbers[mpi_id] = n_ions_inject
+    #comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
+    injection_number = np.array(n_ions_inject,dtype=np.int32)
+    comm.Allgather(injection_number, injection_numbers)
     if injection_sampler.shared_seed:
 	for injection_number in injection_numbers[:mpi_id]:
 	    sample = np.asarray(injection_sampler.get(int(injection_number))).T
@@ -678,9 +695,11 @@ for k in range(n_steps):
     if not boltzmann_electrons:
 	if (expected_electron_injection-n_electrons_inject)>np.random.rand():
 	    n_electrons_inject += 1
-	injection_numbers = np.zeros(n_engines,dtype=np.int32)
-	injection_numbers[mpi_id] = n_electrons_inject
-	comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
+	#injection_numbers[:] = 0
+        #injection_numbers[mpi_id] = n_electrons_inject
+        #comm.Allreduce(MPI.IN_PLACE, injection_numbers, op=MPI.SUM)
+	injection_number = np.array(n_electrons_inject,dtype=np.int32)
+        comm.Allgather(injection_number, injection_numbers)
 	if injection_sampler.shared_seed:
 	    for injection_number in injection_numbers[:mpi_id]:
 		sample = np.asarray(injection_sampler.get(int(injection_number))).T

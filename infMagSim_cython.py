@@ -452,3 +452,12 @@ cdef class sobol_sequencer:
                 sequence[i][j] = next_values[j]
         return sequence
 
+#cdef extern double gsl_cdf_ugaussian_Pinv(double P)
+cdef extern from "gsl/gsl_cdf.h":
+    double gsl_cdf_ugaussian_Pinv(double P)
+
+def inverse_gaussian_cdf_in_place(np.ndarray[np.float32_t,ndim=1] samples):
+    cdef int n_values = len(samples)
+    for i in range(n_values):
+        samples[i] = gsl_cdf_ugaussian_Pinv(samples[i])
+
