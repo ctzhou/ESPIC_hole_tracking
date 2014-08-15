@@ -108,6 +108,118 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
   }
 }
 
+void move_particles_c_minimal(float *grid, float *object_mask, float *potential,
+		      float dt, float charge_to_mass, float background_density, int largest_index,
+		      float *particles, float *density, int *empty_slots,
+		      int *current_empty_slot, int update_position, int periodic_particles,
+		      int largest_allowed_slot, int n_points, int particle_storage_length) {
+  float z_min = grid[0];
+  float z_max = grid[n_points-1];
+  float dz = grid[1]-grid[0];
+  float inactive_slot_position_flag = 2.*z_max;
+  float eps=1.e-5;
+  int j;
+  for (j=0; j<n_points; j++)
+    density[j] = 0;
+  int i;
+  for (i=0; i<largest_index+1; i++) {
+    int within_bounds, within_bounds_before_move, inside_object;
+    int left_index;
+    float electric_field;
+    float accel;
+    float fraction_to_left;
+    float position_offset;
+    int ix = i;
+    int iv = particle_storage_length+i;
+    float current_position=particles[ix];
+    float current_velocity=particles[iv];
+    /*if (periodic_particles) {
+      within_bounds = particles[ix]<0.99*inactive_slot_position_flag;
+      position_offset = fmodf(particles[ix]-z_min,z_max-z_min);
+      if (position_offset>=0.) {
+	particles[ix] = position_offset + z_min;
+      } else {
+	particles[ix] = position_offset + z_max;
+      }
+    } else {
+    */
+      within_bounds = (current_position>z_min+eps) && (current_position<z_max-eps);
+    //}
+    within_bounds_before_move = within_bounds;
+    inside_object = 0;
+    if (within_bounds_before_move) {
+      left_index = (current_position-z_min)/dz;
+      /*if (periodic_particles && left_index>n_points-2)
+	left_index = 0;
+      if (left_index<0 || left_index>n_points-2)
+	printf("bad left_index: %d, %f, %f, %f\n", left_index, z_min, particles[ix], z_max);
+      */
+      electric_field = -(potential[left_index+1]-potential[left_index])/dz;
+      accel = charge_to_mass*electric_field;
+      current_velocity += accel*dt;
+      particles[iv] = current_velocity;
+      if (update_position) {
+	current_position += current_velocity*dt;
+	particles[ix] = current_position;
+	/*if (periodic_particles) {
+	  within_bounds = particles[ix]<0.99*inactive_slot_position_flag;
+	  position_offset = fmodf(particles[ix]-z_min,z_max-z_min);
+	  if (position_offset>=0.) {
+	    particles[ix] = position_offset + z_min;
+	  } else {
+	    particles[ix] = position_offset + z_max;
+	  }
+	} else {
+	*/
+	  within_bounds = (current_position>z_min+eps) && (current_position<z_max-eps);
+	//}
+	if (within_bounds) {
+	  left_index = (current_position-z_min)/dz;
+	  /*if (periodic_particles && left_index>n_points-2)
+	    left_index = 0;
+	  if (left_index<0 || left_index>n_points-2)
+	    printf("bad left_index: %d, %f, %f, %f\n", left_index, z_min, particles[ix], z_max);
+	  */
+	  if (current_position>0) {
+	    fraction_to_left = fmodf(current_position,dz)/dz;
+	  } else {
+	    fraction_to_left = 1.+fmodf(current_position,dz)/dz;
+	  }
+	}
+      }
+    }
+    /*if (within_bounds) {
+      if (object_mask[left_index]>0.) {
+	if (object_mask[left_index+1]>0.) {
+	  if (particles[ix]>grid[left_index]+(1.-object_mask[left_index])*dz)
+	    inside_object = 1;
+	} else {
+	  if (particles[ix]>grid[left_index]+object_mask[left_index]*dz)
+	    inside_object = 1;
+	}
+      }
+    }
+    */
+    if (within_bounds_before_move) {// || (particles[ix]<0.99*inactive_slot_position_flag)) {
+      if (!within_bounds || inside_object) {
+	particles[ix] = inactive_slot_position_flag;
+	*current_empty_slot += 1;
+	if (*current_empty_slot>largest_allowed_slot)
+	  printf("bad current_empty_slot: %d, %d\n", *current_empty_slot, largest_allowed_slot);
+	empty_slots[*current_empty_slot] = i;
+      } else {
+	if (current_position>0) {
+	  fraction_to_left = fmodf(current_position,dz)/dz;
+	} else {
+	  fraction_to_left = 1.+fmodf(current_position,dz)/dz;
+	}
+	density[left_index] += fraction_to_left/background_density;
+	density[left_index+1] += (1-fraction_to_left)/background_density;
+      }
+    }
+  }
+}
+
 void tridiagonal_solve_c(double *a, double *b, double *c, double *d, double *x, int n) { // also modifies b and d
   //first element of a is a row below first elements of b, c, and d
   int j;

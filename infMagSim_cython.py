@@ -21,6 +21,12 @@ cdef extern void move_particles_c(float *grid, float *object_mask, float *potent
                                   int *current_empty_slot, int update_position, int periodic_particles,
                                   int largest_allowed_slot, int n_points, int particle_storage_length)
 
+cdef extern void move_particles_c_minimal(float *grid, float *object_mask, float *potential,
+                                  float dt, float charge_to_mass, float background_density, int largest_index,
+                                  float *particles, float *density, int *empty_slots,
+                                  int *current_empty_slot, int update_position, int periodic_particles,
+                                  int largest_allowed_slot, int n_points, int particle_storage_length)
+
 def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_t, ndim=1] object_mask, \
                        np.ndarray[np.float32_t, ndim=1] potential, \
                        float dt, float charge_to_mass, float background_density, largest_index_list, \

@@ -210,10 +210,11 @@ class uniform_2d_sampler_class:
 	# TODO: avoid each engine having extra samples in the same bins (might not matter since just for velocity smoothing)
 	sample_bins = np.arange(0.,float(n_bins),float(n_bins)/float(n)).astype(np.int32)
 	number_in_bins = np.bincount(sample_bins)
+	bin_ends = np.cumsum(number_in_bins)
 	for i in range(1,self.rand_dim):
 	    for j in range(n_bins):
 		bin_width = 1./number_in_bins[j]
-		current_indices = (sample_bins==j)
+		current_indices = slice(bin_ends[j]-number_in_bins[j],bin_ends[j])
 		samples[current_indices,i] = \
 		    np.random.permutation((np.arange(number_in_bins[j])+samples[current_indices,i])*bin_width)
 	return samples
