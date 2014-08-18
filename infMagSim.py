@@ -148,9 +148,9 @@ z_min = -5.
 z_max = 5.
 n_cells = 2000
 n_points = n_cells+1
-dz = (z_max-z_min)/(n_points-1)
-eps = 1e-5
-grid = np.arange(z_min,z_max+eps,dz,dtype=np.float32)
+eps = 1e-6
+grid, dz = np.linspace(z_min,z_max,num=n_points,endpoint=True,retstep=True)
+grid = grid.astype(np.float32)
 if quasineutral:
     debye_length = dz
 else:

@@ -11,7 +11,7 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
   float z_max = grid[n_points-1];
   float dz = grid[1]-grid[0];
   float inactive_slot_position_flag = 2.*z_max;
-  float eps=1.e-5;
+  float eps=1.e-6;
   int j;
   for (j=0; j<n_points; j++)
     density[j] = 0;
@@ -117,7 +117,7 @@ void move_particles_c_minimal(float *grid, float *object_mask, float *potential,
   float z_max = grid[n_points-1];
   float dz = grid[1]-grid[0];
   float inactive_slot_position_flag = 2.*z_max;
-  float eps=1.e-5;
+  float eps=1.e-6;
   int j;
   for (j=0; j<n_points; j++)
     density[j] = 0;

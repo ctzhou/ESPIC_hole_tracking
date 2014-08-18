@@ -178,7 +178,7 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef int largest_index = largest_index_list[0]
     cdef int current_empty_slot = current_empty_slot_list[0]
     cdef int n_points = len(grid)
-    cdef float eps=1.e-5
+    cdef float eps=1.e-6
     cdef float z_min = grid[0]
     cdef float z_max = grid[n_points-1]
     cdef float dz = grid[1]-grid[0]
@@ -191,6 +191,8 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef np.ndarray[np.float32_t,ndim=1] velocities = draw_velocities(uniform_2d_sample[1],v_th)
     cdef int l,i
     #for velocity_sign in [-1.,1.]:
+    cdef int count_pos=0
+    cdef int count_neg=0
     for l in range(n_inject):
         if current_empty_slot<0:
             print 'no empty slots'
@@ -201,21 +203,27 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
         # TODO: debye length shorter than eps could give problems with below
         if (velocities[l]<0.):
             particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
+            count_neg += 1
         else:
             particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
+            count_pos += 1
         if (i>largest_index):
             largest_index = i
         left_index = int((particles[0,i]-z_min)/dz)
         if (left_index<0 or left_index>n_points-2):
             print 'bad left_index:', left_index, z_min, particles[0,i], z_max, particles[1,i], partial_dt[l]
         else:
-            fraction_to_left = math.fmod(particles[0,i],dz)/dz
+            if (particles[0,i]>0):
+                fraction_to_left = math.fmod(particles[0,i],dz)/dz
+            else:
+                fraction_to_left = 1.+math.fmod(particles[0,i],dz)/dz
             density[left_index] += fraction_to_left/background_density
             density[left_index+1] += (1-fraction_to_left)/background_density
             empty_slots[current_empty_slot] = -1
             current_empty_slot -= 1
     largest_index_list[0] = largest_index
     current_empty_slot_list[0] = current_empty_slot
+    #print 'pos/neg vel. part. inj.:', count_pos, '/', count_neg
 
 cdef extern void tridiagonal_solve_c(double *a, double *b, double *c, double *d, double *x, int n)
 
