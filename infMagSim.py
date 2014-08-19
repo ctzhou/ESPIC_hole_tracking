@@ -63,6 +63,7 @@ smooth_electron_velocities = smooth_ion_velocities
 dist_filename = '/home/chaako/analysis/runTmp/dist_func.npz'
 project_read_particles = False
 projection_angle = np.pi*5/16.
+create_electron_dimple = False # Only use with periodic_particles for now, and not with quiet start
 periodic_particles = False
 periodic_potential = periodic_particles
 prescribe_potential = False
@@ -71,6 +72,7 @@ def prescribed_potential(grid, t):
     z_max = grid[-1]
     return min(1.,t/(z_max-z_min))*np.sin(2.*np.pi*grid/(z_max-z_min))
 solve_for_electric_field = False
+simulate_moon = True
 boltzmann_electrons = False
 quasineutral = False
 if quasineutral:
@@ -364,6 +366,11 @@ background_electron_density = n_electrons*n_engines*dz/(z_max-z_min)
 n_bins = n_points;
 v_max_e = 4.*v_th_e
 v_min_e = -v_max_e
+dimple_width = v_th_e/10.
+dimple_velocity = 0.1*v_th_e
+dimple_height = 0.1
+def dimple(x, mu=dimple_velocity, sig=dimple_width, height=dimple_height):
+    return height*np.exp( -np.power(x-mu,2.) / (2*np.power(sig,2.)) )
 
 # <codecell>
 
@@ -374,57 +381,73 @@ if not boltzmann_electrons:
     largest_electron_index = [n_electrons-1]
     electron_storage_length = int(n_electrons*extra_storage_factor)
     electrons = np.zeros([2,electron_storage_length],dtype=np.float32)
-    #electrons[0][0:n_electrons] = np.random.rand(n_electrons)*(z_max-z_min) + z_min # positions
-    if uniform_2d_sampler.shared_seed:
-        for id in range(n_engines):
-	    sample = np.asarray(uniform_2d_sampler.get(n_electrons)).T
-	    if id==mpi_id:
-	        uniform_2d_sample = sample
-    elif quiet_start_and_injection:
-	uniform_2d_sample = uniform_2d_sampler.get_uniform(n_electrons,number_of_uniforming_bins).T
-    else:
-	uniform_2d_sample = uniform_2d_sampler.get(n_electrons).T
-    electrons[0][0:n_electrons] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
-    if (read_electron_dist_from_file):
-	dist_file = np.load(dist_filename)
-	electron_distribution_function = dist_file['electron_distribution_function']
-	electron_v_edges = dist_file['electron_hist_v_edges']
-	weights = electron_distribution_function/np.sum(electron_distribution_function)
-	# TODO: option to sample bins quasi-randomly?
-	electron_sample_bins = np.random.choice(len(weights),size=n_electrons,p=weights)
-	left_edge_weights = uniform_2d_sample[1]
-	electrons[1][0:n_electrons] = left_edge_weights*electron_v_edges[electron_sample_bins] +\
-	    (1.-left_edge_weights)*electron_v_edges[electron_sample_bins+1]
-    else:
-	#electrons[1][0:n_electrons] = np.random.randn(n_electrons)*v_th_e + v_d_e # velocities
-	#electrons[1][0:n_electrons] = norm.ppf(uniform_2d_sample[1])*v_th_e + v_d_e # velocities
-	electrons[1,0:n_electrons] = uniform_2d_sample[1] # velocities
-	inverse_gaussian_cdf_in_place(electrons[1,0:n_electrons]) # velocities
-	electrons[1,0:n_electrons] *= v_th_e # velocities
-	electrons[1,0:n_electrons] += v_d_e # velocities
-	#electrons[2][0:n_electrons] = np.ones(n_electrons) # active slots
-	#electrons[2][0:n_electrons] = np.ones(n_electrons,dtype=np.float32) # relative weights
-    if smooth_electron_velocities:
-	# TODO: allow quasi-random numbers here?
-	electron_v_smoothing_scale = v_th_e/10.
-	if read_electron_dist_from_file:
-	    electron_v_smoothing_scale = electron_v_edges[1]-electron_v_edges[0]
-	electrons[1][0:n_electrons] += np.random.randn(n_electrons)*electron_v_smoothing_scale
-    if project_read_particles:
+    n_samples = n_electrons
+    n_electrons_so_far = 0
+    while n_electrons_so_far<n_electrons:
+	if (n_samples==n_electrons): # First iteration attempt to initialize all electrons
+	    remaining_indices = slice(0,n_electrons)
+	#electrons[0][remaining_indices] = np.random.rand(n_samples)*(z_max-z_min) + z_min # positions
 	if uniform_2d_sampler.shared_seed:
 	    for id in range(n_engines):
-		sample = np.asarray(uniform_2d_sampler.get(n_electrons)).T
+		sample = np.asarray(uniform_2d_sampler.get(n_samples)).T
 		if id==mpi_id:
 		    uniform_2d_sample = sample
 	elif quiet_start_and_injection:
-	    uniform_2d_sample = uniform_2d_sampler.get_uniform(n_electrons,number_of_uniforming_bins).T
+	    uniform_2d_sample = uniform_2d_sampler.get_uniform(n_samples,number_of_uniforming_bins).T
 	else:
-	    uniform_2d_sample = uniform_2d_sampler.get(n_electrons).T
-	perpendicular_velocities = norm.ppf(uniform_2d_sample[1])*v_th_e
-	velocity_magnitudes = np.sqrt(electrons[1][0:n_electrons]*electrons[1][0:n_electrons]
-				      + perpendicular_velocities*perpendicular_velocities)
-	velocity_angles = np.arctan2(perpendicular_velocities, electrons[1][0:n_electrons])
-	electrons[1][0:n_electrons] = velocity_magnitudes*np.cos(velocity_angles-projection_angle)
+	    uniform_2d_sample = uniform_2d_sampler.get(n_samples).T
+	electrons[0,remaining_indices] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
+	if (read_electron_dist_from_file):
+	    dist_file = np.load(dist_filename)
+	    electron_distribution_function = dist_file['electron_distribution_function']
+	    electron_v_edges = dist_file['electron_hist_v_edges']
+	    weights = electron_distribution_function/np.sum(electron_distribution_function)
+	    # TODO: option to sample bins quasi-randomly?
+	    electron_sample_bins = np.random.choice(len(weights),size=n_samples,p=weights)
+	    left_edge_weights = uniform_2d_sample[1]
+	    electrons[1,remaining_indices] = left_edge_weights*electron_v_edges[electron_sample_bins] +\
+		(1.-left_edge_weights)*electron_v_edges[electron_sample_bins+1]
+	else:
+	    #electrons[1,remaining_indices] = np.random.randn(n_samples)*v_th_e + v_d_e # velocities
+	    #electrons[1,remaining_indices] = norm.ppf(uniform_2d_sample[1])*v_th_e + v_d_e # velocities
+	    electrons[1,remaining_indices] = uniform_2d_sample[1] # velocities
+	    inverse_gaussian_cdf_in_place(electrons[1,remaining_indices]) # velocities
+	    electrons[1,remaining_indices] *= v_th_e # velocities
+	    electrons[1,remaining_indices] += v_d_e # velocities
+	    #electrons[2,remaining_indices] = np.ones(n_samples) # active slots
+	    #electrons[2,remaining_indices] = np.ones(n_samples,dtype=np.float32) # relative weights
+	if smooth_electron_velocities:
+	    # TODO: allow quasi-random numbers here?
+	    electron_v_smoothing_scale = v_th_e/10.
+	    if read_electron_dist_from_file:
+		electron_v_smoothing_scale = electron_v_edges[1]-electron_v_edges[0]
+	    electrons[1,remaining_indices] += np.random.randn(n_samples)*electron_v_smoothing_scale
+	if project_read_particles:
+	    if uniform_2d_sampler.shared_seed:
+		for id in range(n_engines):
+		    sample = np.asarray(uniform_2d_sampler.get(n_samples)).T
+		    if id==mpi_id:
+			uniform_2d_sample = sample
+	    elif quiet_start_and_injection:
+		uniform_2d_sample = uniform_2d_sampler.get_uniform(n_samples,number_of_uniforming_bins).T
+	    else:
+		uniform_2d_sample = uniform_2d_sampler.get(n_samples).T
+	    perpendicular_velocities = norm.ppf(uniform_2d_sample[1])*v_th_e
+	    velocity_magnitudes = np.sqrt(electrons[1,remaining_indices]*electrons[1,remaining_indices]
+					  + perpendicular_velocities*perpendicular_velocities)
+	    velocity_angles = np.arctan2(perpendicular_velocities, electrons[1,remaining_indices])
+	    electrons[1,remaining_indices] = velocity_magnitudes*np.cos(velocity_angles-projection_angle)
+	if create_electron_dimple:
+	    # TODO: unify random number handling?
+	    rejection_samples = np.random.rand(n_samples)
+	    remaining_indices = rejection_samples < dimple(electrons[1,remaining_indices])
+	    n_successful_samples = n_samples - len(electrons[1,remaining_indices])
+	    if mpi_id==0 and n_electrons-n_electrons_so_far>0:
+		print 'Still need', n_electrons-n_electrons_so_far, 'electrons...doing another iteration.'
+	else:
+	    n_successful_samples = n_samples
+	n_electrons_so_far += n_successful_samples
+	n_samples = n_electrons - n_electrons_so_far
     electrons[0][n_electrons:] = inactive_slot_position_flag
     # List remaining slots in reverse order to prevent memory fragmentation
     empty_electron_slots = -np.ones(electron_storage_length,dtype=np.int32)
@@ -541,10 +564,11 @@ damping_end_step = 0 # make <= damping_start_step to disable damping
 if (mpi_id==0):
     print n_steps, n_steps*dt
 for k in range(n_steps):
-    if k==1: # simulate moon by knocking out particles
-        object_mask[0.45*n_cells:0.55*n_cells] = 1.
-    elif k==2:
-        object_mask = np.zeros_like(grid)
+    if simulate_moon:
+	if k==1: # simulate moon by knocking out particles
+	    object_mask[0.45*n_cells:0.55*n_cells] = 1.
+	elif k==2:
+	    object_mask = np.zeros_like(grid)
     comm.Allreduce(MPI.IN_PLACE, ion_density, op=MPI.SUM)
     if periodic_particles:
 	ion_density[0] += ion_density[-1]
