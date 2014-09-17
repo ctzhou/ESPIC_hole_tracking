@@ -28,11 +28,13 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
     int iv = particle_storage_length+i;
     if (periodic_particles) {
       within_bounds = particles[ix]<0.99*inactive_slot_position_flag;
-      position_offset = fmodf(particles[ix]-z_min,z_max-z_min);
-      if (position_offset>=0.) {
-	particles[ix] = position_offset + z_min;
-      } else {
-	particles[ix] = position_offset + z_max;
+      if (within_bounds) {
+	position_offset = fmodf(particles[ix]-z_min,z_max-z_min);
+	if (position_offset>=0.) {
+	  particles[ix] = position_offset + z_min;
+	} else {
+	  particles[ix] = position_offset + z_max;
+	}
       }
     } else {
       within_bounds = (particles[ix]>z_min+eps) && (particles[ix]<z_max-eps);
@@ -52,11 +54,13 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
 	particles[ix] += particles[iv]*dt;
 	if (periodic_particles) {
 	  within_bounds = particles[ix]<0.99*inactive_slot_position_flag;
-	  position_offset = fmodf(particles[ix]-z_min,z_max-z_min);
-	  if (position_offset>=0.) {
-	    particles[ix] = position_offset + z_min;
-	  } else {
-	    particles[ix] = position_offset + z_max;
+	  if (within_bounds) {
+	    position_offset = fmodf(particles[ix]-z_min,z_max-z_min);
+	    if (position_offset>=0.) {
+	      particles[ix] = position_offset + z_min;
+	    } else {
+	      particles[ix] = position_offset + z_max;
+	    }
 	  }
 	} else {
 	  within_bounds = (particles[ix]>z_min+eps) && (particles[ix]<z_max-eps);
