@@ -64,6 +64,8 @@ dist_filename = '/home/chaako/analysis/runTmp/dist_func.npz'
 project_read_particles = False
 projection_angle = np.pi*5/16.
 create_electron_dimple = False # Only use with periodic_particles for now, and not with quiet start
+ion_distribution_gap_center = 0. # Simulate beams by splitting ion distribution
+ion_distribution_gap_half_width = 0. # Simulate beams by splitting ion distribution
 periodic_particles = False
 periodic_potential = periodic_particles
 prescribe_potential = False
@@ -211,7 +213,7 @@ class uniform_2d_sampler_class:
 	samples[:,0] = (np.arange(n)+samples[:,0])/float(n)
 	# TODO: avoid each engine having extra samples in the same bins (might not matter since just for velocity smoothing)
 	sample_bins = np.arange(0.,float(n_bins),float(n_bins)/float(n)).astype(np.int32)
-	number_in_bins = np.bincount(sample_bins)
+	number_in_bins = np.bincount(sample_bins) # TODO: assuming here that there is at least one per bin
 	bin_ends = np.cumsum(number_in_bins)
 	for i in range(1,self.rand_dim):
 	    for j in range(n_bins):
@@ -336,6 +338,8 @@ if project_read_particles:
 				  + perpendicular_velocities*perpendicular_velocities)
     velocity_angles = np.arctan2(perpendicular_velocities, ions[1][0:n_ions])
     ions[1][0:n_ions] = velocity_magnitudes*np.cos(velocity_angles-projection_angle)
+if ion_distribution_gap_half_width>0.:
+    ions[1,0:n_ions] += np.sign(ions[1,0:n_ions]-ion_distribution_gap_center)*ion_distribution_gap_half_width
 ions[0][n_ions:] = inactive_slot_position_flag
 # List remaining slots in reverse order to prevent memory fragmentation
 empty_ion_slots = -np.ones(ion_storage_length,dtype=np.int32)
@@ -409,9 +413,9 @@ if not boltzmann_electrons:
 		(1.-left_edge_weights)*electron_v_edges[electron_sample_bins+1]
 	else:
 	    #electrons[1,remaining_indices] = np.random.randn(n_samples)*v_th_e + v_d_e # velocities
-	    #electrons[1,remaining_indices] = norm.ppf(uniform_2d_sample[1])*v_th_e + v_d_e # velocities
-	    electrons[1,remaining_indices] = uniform_2d_sample[1] # velocities
-	    inverse_gaussian_cdf_in_place(electrons[1,remaining_indices]) # velocities
+	    electrons[1,remaining_indices] = norm.ppf(uniform_2d_sample[1]) # velocities
+	    #electrons[1,remaining_indices] = uniform_2d_sample[1] # velocities
+	    #inverse_gaussian_cdf_in_place(electrons[1,remaining_indices]) # velocities; doesn't work with dimple
 	    electrons[1,remaining_indices] *= v_th_e # velocities
 	    electrons[1,remaining_indices] += v_d_e # velocities
 	    #electrons[2,remaining_indices] = np.ones(n_samples) # active slots
