@@ -155,17 +155,20 @@ def move_particles_cython(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.f
 
 
 def accumulate_density(grid, object_mask, background_density, largest_index,  particles, density, \
-                           empty_slots, current_empty_slot_list):
+                           empty_slots, current_empty_slot_list, periodic_particles=False, \
+                           use_pure_c_version=False):
     potential = np.zeros_like(grid)
     move_particles(grid, object_mask, potential, 0, 1, background_density, largest_index, particles, density, \
-                       empty_slots, current_empty_slot_list, update_position=False)
+                       empty_slots, current_empty_slot_list, update_position=False, \
+                       periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_version)
 
 def initialize_mover(grid, object_mask, potential, dt, chage_to_mass, largest_index, particles, \
-                         empty_slots, current_empty_slot_list, periodic_particles=False):
+                         empty_slots, current_empty_slot_list, periodic_particles=False, \
+                         use_pure_c_version=False):
     density = np.zeros_like(grid)
     move_particles(grid, object_mask, potential, -dt/2, chage_to_mass, 1, largest_index, \
                        particles, density, empty_slots, current_empty_slot_list, update_position=False, \
-                       periodic_particles=periodic_particles)
+                       periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_version)
 
 def draw_velocities(uniform_sample,v_th,v_d=0):
     if (v_d!=0):

@@ -532,22 +532,25 @@ if (mpi_id==0):
 %%px
 ion_density = np.zeros_like(grid)
 accumulate_density(grid, object_mask, background_ion_density, largest_ion_index, ions, ion_density, \
-		       empty_ion_slots, current_empty_ion_slot)
+		       empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles, \
+		       use_pure_c_version=use_pure_c_mover)
 electron_density = np.zeros_like(grid)
 charge_density = np.zeros_like(grid)
 previous_charge_density = np.zeros_like(grid)
 charge_derivative = np.zeros_like(grid)
 if not boltzmann_electrons:
     accumulate_density(grid, object_mask, background_electron_density, largest_electron_index, electrons, \
-			   electron_density, empty_electron_slots, current_empty_electron_slot)
+			   electron_density, empty_electron_slots, current_empty_electron_slot, \
+			   periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover)
 
 initialize_mover(grid, object_mask, potential, dt, ion_charge_to_mass, largest_ion_index, ions, \
-	     empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles)
+		     empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles, \
+		     use_pure_c_version=use_pure_c_mover)
 if not boltzmann_electrons:
     electron_charge_to_mass = -1./mass_ratio
     initialize_mover(grid, object_mask, potential, dt, electron_charge_to_mass, largest_electron_index, electrons, \
 			 empty_electron_slots, current_empty_electron_slot, \
-			 periodic_particles=periodic_particles)
+			 periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover)
 injection_numbers = np.zeros(n_engines,dtype=np.int32)
 
 # <codecell>
