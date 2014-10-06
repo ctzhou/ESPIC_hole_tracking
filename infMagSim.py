@@ -75,7 +75,11 @@ def prescribed_potential(grid, t):
     return min(1.,t/(z_max-z_min))*np.sin(2.*np.pi*grid/(z_max-z_min))
 solve_for_electric_field = False
 simulate_moon = True
-boltzmann_electrons = False
+#v_drift_moon = 25.
+#moon_radius = 1.
+#t_moon_center = moon_radius/v_drift_moon
+boltzmann_electrons = False # Don't move electrons (assume Boltzmann)
+boltzmann_potential = boltzmann_electrons # Use Boltzmann relation to solve for potential
 quasineutral = False
 if quasineutral:
     boltzmann_electrons = True
@@ -573,6 +577,7 @@ if (mpi_id==0):
 for k in range(n_steps):
     if simulate_moon:
 	if k==1: # simulate moon by knocking out particles
+	    # TODO: fix half-step in velocity?
 	    object_mask[0.45*n_cells:0.55*n_cells] = 1.
 	elif k==2:
 	    object_mask = np.zeros_like(grid)
@@ -595,6 +600,9 @@ for k in range(n_steps):
 	    electron_density[-1] *= 2. # half-cell at ends
     if include_object:
 	dist_to_obj = circular_cross_section(grid, t, t_object_center, v_drift, object_radius, object_mask)
+#    elif simulate_moon and t<=2*t_moon_center:
+#	dist_to_obj = circular_cross_section(grid, t, t_moon_center, v_drift_moon, moon_radius, object_mask)
+#	dist_to_obj = 100. # Don't include in potential
     else:
 	dist_to_obj = 100.
     object_potential = -3.
@@ -619,7 +627,7 @@ for k in range(n_steps):
 	    np.subtract(charge_density,previous_charge_density,out=charge_derivative)
 	    charge_derivative /= dt
 	    np.copyto(previous_charge_density,charge_density)
-	    if boltzmann_electrons:
+	    if boltzmann_potential:
 		np.copyto(charge_density,ion_density) # TODO: could just make reference
 		max_potential_iter = 20
 	    else:
@@ -637,7 +645,7 @@ for k in range(n_steps):
 		poisson_solve(grid, object_center_mask, charge_density, \
 				  debye_length, potential, \
 				  object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot), \
-				  boltzmann_electrons=boltzmann_electrons, periodic_potential=periodic_potential, \
+				  boltzmann_electrons=boltzmann_potential, periodic_potential=periodic_potential, \
 				  use_pure_c_version=use_pure_c_solver)
 		np.subtract(potential,previous_potential,out=previous_potential)
 		np.absolute(previous_potential,out=previous_potential)
