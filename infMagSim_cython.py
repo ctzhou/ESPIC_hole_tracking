@@ -68,7 +68,7 @@ def move_particles_cython(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.f
     cdef int n_points = len(grid)
     cdef float z_min = grid[0]
     cdef float z_max = grid[n_points-1]
-    cdef float dz = grid[1]-grid[0]
+    cdef float dz = (z_max-z_min)/(n_points-1)
     cdef float inactive_slot_position_flag = 2*z_max
     cdef float eps=1.e-5
     cdef int j, object_index
@@ -186,7 +186,7 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef float eps=1.e-6
     cdef float z_min = grid[0]
     cdef float z_max = grid[n_points-1]
-    cdef float dz = grid[1]-grid[0]
+    cdef float dz = (z_max-z_min)/(n_points-1)
     cdef float fraction_to_left
     cdef int left_index
     #cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*np.random.rand(n_inject).astype(np.float32)
@@ -273,7 +273,7 @@ def poisson_solve_cython(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.flo
     cdef int n_points = len(grid)
     cdef float z_min = grid[0]
     cdef float z_max = grid[n_points-1]
-    cdef float dz = grid[1]-grid[0]
+    cdef float dz = (z_max-z_min)/(n_points-1)
 
     cdef np.ndarray[np.float64_t,ndim=1] diagonal = -2.*np.ones(n_points,dtype=np.float64)
     cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal = np.ones_like(diagonal)
@@ -394,7 +394,7 @@ def gauss_solve(np.ndarray[np.float32_t,ndim=1] grid, \
     cdef int n_points = len(grid)
     cdef float z_min = grid[0]
     cdef float z_max = grid[n_points-1]
-    cdef float dz = grid[1]-grid[0]
+    cdef float dz = (z_max-z_min)/(n_points-1)
 
     #cdef np.ndarray[np.float64_t,ndim=1] diagonal = -np.ones(n_points,dtype=np.float64)
     #cdef np.ndarray[np.float64_t,ndim=1] lower_diagonal = np.zeros_like(diagonal)

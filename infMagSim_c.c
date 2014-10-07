@@ -9,7 +9,7 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
 		      int largest_allowed_slot, int n_points, int particle_storage_length) {
   float z_min = grid[0];
   float z_max = grid[n_points-1];
-  float dz = grid[1]-grid[0];
+  float dz = (z_max-z_min)/(n_points-1);
   float inactive_slot_position_flag = 2.*z_max;
   float eps=1.e-6;
   int j;
@@ -119,7 +119,7 @@ void move_particles_c_minimal(float *grid, float *object_mask, float *potential,
 		      int largest_allowed_slot, int n_points, int particle_storage_length) {
   float z_min = grid[0];
   float z_max = grid[n_points-1];
-  float dz = grid[1]-grid[0];
+  float dz = (z_max-z_min)/(n_points-1);
   float inactive_slot_position_flag = 2.*z_max;
   float eps=1.e-6;
   int j;
@@ -242,9 +242,9 @@ void poisson_solve_c(float *grid, float *object_mask, float *charge, float debye
 		     int boltzmann_electrons, int periodic_potential, int n_points) {
   // if boltzmann_electrons then charge=ion_charge
   float eps = 1.e-5;
-  //float z_min = grid[0];
-  //float z_max = grid[n_points-1];
-  float dz = grid[1]-grid[0];
+  float z_min = grid[0];
+  float z_max = grid[n_points-1];
+  float dz = (z_max-z_min)/(n_points-1);
   int j;
 
   double *diagonal, *lower_diagonal, *upper_diagonal, *right_hand_side;
