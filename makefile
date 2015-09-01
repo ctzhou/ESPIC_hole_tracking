@@ -15,10 +15,10 @@ infMagSim_cython.c: infMagSim_cython.pyx
 
 infMagSim_cython.o: infMagSim_cython.c
 	gcc -pthread -fPIC -fwrapv -O2 -Wall -fno-strict-aliasing \
-		-L /home/chaako/local/lib -lgsl -lgslcblas \
-		-I /home/chaako/local/include/ \
-		-I /home/chaako/virtualenvs/IPython/include/python2.7/ \
-		-I /home/chaako/virtualenvs/IPython/lib/python2.7/site-packages/numpy/core/include/ \
+		-L /home/ctzhou/local/lib -lgsl -lgslcblas \
+		-I /home/ctzhou/local/include/ \
+		-I /home/ctzhou/virtualenvs/ESPIC/include/python2.7/ \
+		-I /home/ctzhou/virtualenvs/ESPIC/lib/python2.7/site-packages/numpy/core/include/ \
 		-o infMagSim_cython.o -c infMagSim_cython.c
 
 infMagSim_c.o: infMagSim_c.c
@@ -27,6 +27,6 @@ infMagSim_c.o: infMagSim_c.c
 
 infMagSim_cython.so: infMagSim_cython.o infMagSim_c.o
 	gcc -shared -pthread -fPIC -fwrapv -O2 -Wall -fno-strict-aliasing \
-		-L /home/chaako/local/lib -lgsl -lgslcblas \
+		-L /home/ctzhou/local/lib -lgsl -lgslcblas \
 		-o infMagSim_cython.so infMagSim_cython.o infMagSim_c.o
 
