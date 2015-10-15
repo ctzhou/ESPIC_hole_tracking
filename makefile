@@ -1,7 +1,7 @@
 infMagSim: infMagSim_script.py infMagSim_cython.so
 
-infMagSim_script.py: infMagSim.py
-	sed -n '/#####ScriptStart#####/,/#####ScriptEnd#####/p' infMagSim.py \
+#infMagSim_script.py: infMagSim.py
+#	sed -n '/#####ScriptStart#####/,/#####ScriptEnd#####/p' infMagSim.py \
 		| grep -v '#####Script' | grep -v codecell | grep -v %%px \
 		> infMagSim_script.py
 

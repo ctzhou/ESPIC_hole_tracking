@@ -1,5 +1,3 @@
-
-
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
 mpi_id = comm.Get_rank()
@@ -9,6 +7,7 @@ n_engines = comm.size
 import io
 import math
 import numpy as np
+import scipy.signal as signal
 if (mpi_id==0):
     import matplotlib as mpl
     mpl.use('Agg') # non-GUI backend
@@ -25,28 +24,42 @@ smooth_electron_velocities = smooth_ion_velocities
 dist_filename = '/home/chaako/analysis/runTmp/dist_func.npz'
 project_read_particles = False
 projection_angle = np.pi*5/16.
-create_electron_dimple = False # Only use with periodic_particles for now, and not with quiet start
+create_electron_dimple = True
+moving_box_simulation = True # Using a box that tracks the movement of the hole
 ion_distribution_gap_center = 0. # Simulate beams by splitting ion distribution
 ion_distribution_gap_half_width = 0. # Simulate beams by splitting ion distribution
 periodic_particles = False
 periodic_potential = periodic_particles
 prescribe_potential = False
-def prescribed_potential(grid, t):
+time_steps_immobile_ions = 10000 #number of time steps after which ions are immobile
+time_steps_immobile_electrons = 0 #number of time steps before which electrons are immobile
+prescribed_potential_growth_cycles = 600 
+set_background_potential = False
+def prescribed_potential(grid, t, debye_length=1.):
     z_min = grid[0]
     z_max = grid[-1]
-    return min(1.,t/(z_max-z_min))*np.sin(2.*np.pi*grid/(z_max-z_min))
+   # return min(1.,t/(z_max-z_min))*np.sin(2.*np.pi*grid/(z_max-z_min))
+   # return min(1.,0.01*t/(4*np.power(debye_length,2.)))*np.exp(-np.power(grid,2.)/(2*np.power(debye_length,2.)))
+    return min(1.,0.01*600*dt/(4*np.power(debye_length,2.)))*np.exp(-np.power(grid,2.)/(2*np.power(debye_length,2.)))
+
 solve_for_electric_field = False
-simulate_moon = True
+simulate_moon = False
 #v_drift_moon = 25.
 #moon_radius = 1.
 #t_moon_center = moon_radius/v_drift_moon
 boltzmann_electrons = False # Don't move electrons (assume Boltzmann)
 boltzmann_potential = boltzmann_electrons # Use Boltzmann relation to solve for potential
 decouple_ions_from_electrons = False # Use full potential to move electrons even if Boltzmann for ions
+if decouple_ions_from_electrons:
+    boltzmann_potential = True
 quasineutral = False
+zero_electric_field_test = False
 if quasineutral:
     boltzmann_electrons = True
-quiet_start_and_injection = True
+quiet_start_only = True
+quiet_start_and_injection = False
+if quiet_start_only:
+    quiet_start_and_injection = False
 use_quasirandom_numbers = False
 use_quasirandom_dimensions_for_parallelism = False
 include_object = False
@@ -110,14 +123,24 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
                 object_mask[j] = 1.
     return distance_to
 
+#def electric_field_filter(grid,data_array,L,fine_mesh):
+#    Res = []
+#    for x in fine_mesh:
+       # H = 4*np.tanh((x-grid)/L)/np.cosh((x-grid)/L)**4
+#        H = np.tanh((x-grid)/L)/np.cosh((x-grid)/L)
+#        Res.append(np.multiply(data_array,H).sum())
+#    return Res
 
-z_min = -5.
-z_max = 5.
-n_cells = 2000
+z_min = -1.5
+z_max = 1.5
+n_cells = 500
 n_points = n_cells+1
+n_tracking_mesh_points = 1001
 eps = 1e-6
 grid, dz = np.linspace(z_min,z_max,num=n_points,endpoint=True,retstep=True)
+fine_mesh, fine_dz = np.linspace(z_min,z_max,num=n_tracking_mesh_points,endpoint=True,retstep=True)
 grid = grid.astype(np.float32)
+fine_mesh = fine_mesh.astype(np.float32)
 if quasineutral:
     debye_length = dz
 else:
@@ -128,8 +151,25 @@ number_per_injection_batch = 100
 if (mpi_id==0):
     print dz, debye_length
 
+seedgenrand_c() # seed C MT19937 random number generator
 
 seed = 384+mpi_id*mpi_id*mpi_id
+
+#def histogram2d_uniform_grid(X,Y,x_min,x_max,y_min,y_max,n_bins_x,n_bins_y,eps):
+#    print 'Called','Histogram2D'
+#    step_x = (x_max-x_min)/n_bins_x
+#    step_y = (y_max-y_min)/n_bins_y
+#    x_hist_edges = np.arange(x_min,x_max+eps,step_x)
+#    y_hist_edges = np.arange(y_min,y_max+eps,step_y)
+#    histogram_2d = np.zeros((n_bins_x,n_bins_y),dtype=np.int32)
+#    data_2d = np.dstack((X,Y))
+#    for C in data_2d[0]:
+#        n_x = np.floor((C[0]-x_min)/step_x)
+#        n_y = np.floor((C[1]-y_min)/step_y)
+#        if (n_y>=0 and n_y<=n_bins_y-1) and (n_x>=0 and n_x<=n_bins_x-1):
+#            histogram_2d[n_x,n_y] += 1
+#    return histogram_2d, x_hist_edges, y_hist_edges
+
 class uniform_2d_sampler_class:
     def __init__(self,seed,low_discrepancy=False,shared_seed=True,rand_dim=1,parallel_dimensions=1,\
 		numbers_per_batch=10000000, mpi_id=0):
@@ -229,14 +269,16 @@ if quiet_start_and_injection:
 else:
     injection_sampler = uniform_2d_sampler
 
-
+sigma = 1.
 v_th_i = 1
 v_d_i = 0
-n_ions = 100000
-extra_storage_factor = 1.2
-background_ion_density = n_ions*n_engines*dz/(z_max-z_min)
+n_ions = 1000000
+# This is the initial number of ions inside the computation domain
+n_ions_infinity = 1000000 
+extra_storage_factor = 3
+background_ion_density = n_ions_infinity*n_engines*dz/(z_max-z_min)
 n_bins = n_points
-v_max_i = 4.*v_th_i
+v_max_i = 15.*v_th_i
 v_min_i = -v_max_i
 inactive_slot_position_flag = 2*z_max
 
@@ -244,14 +286,20 @@ inactive_slot_position_flag = 2*z_max
 largest_ion_index = [n_ions-1]
 ion_storage_length = int(extra_storage_factor*n_ions)
 ions = np.zeros([2,ion_storage_length],dtype=np.float32)
+#ions = np.zeros([3,ion_storage_length],dtype=np.float32)
+n_iterations_ions = 0
+def expected_particle_injection(n_infinity,v_th,v_d,dt):
+    beta = v_d/(np.sqrt(2.)*v_th)
+    return 2*n_infinity*v_th/math.sqrt(2.*math.pi)*np.exp(-np.power(beta,2.))*dt+n_infinity*v_d*math.erf(beta)*dt
 #ions[0][0:n_ions] = np.random.rand(n_ions)*(z_max-z_min) + z_min # positions
 if uniform_2d_sampler.shared_seed:
     for id in range(n_engines):
 	sample = np.asarray(uniform_2d_sampler.get(n_ions)).T
 	if id==mpi_id:
 	    uniform_2d_sample = sample
-elif quiet_start_and_injection:
+elif quiet_start_and_injection or quiet_start_only and n_iterations_ions <= 1:
     uniform_2d_sample = uniform_2d_sampler.get_uniform(n_ions,number_of_uniforming_bins).T
+    n_iterations_ions += 1
 else:
     uniform_2d_sample = uniform_2d_sampler.get(n_ions).T
 ions[0][0:n_ions] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
@@ -270,7 +318,7 @@ else:
     #ions[1][0:n_ions] = norm.ppf(uniform_2d_sample[1])*v_th_i + v_d_i # velocities
     ions[1,0:n_ions] = uniform_2d_sample[1] # velocities
     inverse_gaussian_cdf_in_place(ions[1,0:n_ions]) # velocities
-    ions[1,0:n_ions] *= v_th_i # velocities
+    ions[1,0:n_ions] *= v_th_i/np.sqrt(sigma) # velocities
     ions[1,0:n_ions] += v_d_i # velocities
     #ions[2][0:n_ions] = np.ones(n_ions) # active slots
     #ions[2][0:n_ions] = np.ones(n_ions,dtype=np.float32) # relative weights
@@ -319,17 +367,19 @@ if (mpi_id==0):
 #if not boltzmann_electrons:
 mass_ratio = 1./1836.
 n_electrons = n_ions
+n_electrons_infinity = n_ions_infinity
 v_th_e = 1./math.sqrt(mass_ratio)
 v_d_e = 0.
-background_electron_density = n_electrons*n_engines*dz/(z_max-z_min)
+background_electron_density = n_electrons_infinity*n_engines*dz/(z_max-z_min)
 n_bins = n_points;
 v_max_e = 4.*v_th_e
 v_min_e = -v_max_e
-dimple_width = v_th_e/10.
-dimple_velocity = 0.1*v_th_e
-dimple_height = 0.1
-def dimple(x, mu=dimple_velocity, sig=dimple_width, height=dimple_height):
-    return height*np.exp( -np.power(x-mu,2.) / (2*np.power(sig,2.)) )
+dimple_velocity_width = v_th_e/15
+dimple_velocity = 0.
+dimple_height = 0.9
+dimple_spatial_width = 1*debye_length
+def dimple(v, x, mu=dimple_velocity, sig=dimple_velocity_width, height=dimple_height, Lambda=dimple_spatial_width):
+    return height*np.exp( -np.power(v-mu,2.) / (2*np.power(sig,2.)) )*np.exp(-np.power(x,2.) / (2*np.power(Lambda,2.))) 
 
 
 electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
@@ -338,22 +388,27 @@ if not boltzmann_electrons:
     largest_electron_index = [n_electrons-1]
     electron_storage_length = int(n_electrons*extra_storage_factor)
     electrons = np.zeros([2,electron_storage_length],dtype=np.float32)
+#    electrons = np.zeros([3,electron_storage_length],dtype=np.float32)
     n_samples = n_electrons
     n_electrons_so_far = 0
+    initialize_z = True
+    n_iterations_electrons = 0
     while n_electrons_so_far<n_electrons:
 	if (n_samples==n_electrons): # First iteration attempt to initialize all electrons
-	    remaining_indices = slice(0,n_electrons)
+	    remaining_indices = np.arange(n_electrons)
 	#electrons[0][remaining_indices] = np.random.rand(n_samples)*(z_max-z_min) + z_min # positions
 	if uniform_2d_sampler.shared_seed:
 	    for id in range(n_engines):
 		sample = np.asarray(uniform_2d_sampler.get(n_samples)).T
 		if id==mpi_id:
 		    uniform_2d_sample = sample
-	elif quiet_start_and_injection:
+	elif quiet_start_and_injection or quiet_start_only and n_iterations_electrons <= 0:
 	    uniform_2d_sample = uniform_2d_sampler.get_uniform(n_samples,number_of_uniforming_bins).T
+            n_iterations_electrons += 1
 	else:
 	    uniform_2d_sample = uniform_2d_sampler.get(n_samples).T
-	electrons[0,remaining_indices] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
+        if initialize_z:
+            electrons[0,remaining_indices] = uniform_2d_sample[0]*(z_max-z_min) + z_min # positions
 	if (read_electron_dist_from_file):
 	    dist_file = np.load(dist_filename)
 	    electron_distribution_function = dist_file['electron_distribution_function']
@@ -397,8 +452,9 @@ if not boltzmann_electrons:
 	if create_electron_dimple:
 	    # TODO: unify random number handling?
 	    rejection_samples = np.random.rand(n_samples)
-	    remaining_indices = rejection_samples < dimple(electrons[1,remaining_indices])
+	    remaining_indices = remaining_indices[rejection_samples < dimple(electrons[1,remaining_indices],electrons[0,remaining_indices])]
 	    n_successful_samples = n_samples - len(electrons[1,remaining_indices])
+            initialize_z = False
 	    if mpi_id==0 and n_electrons-n_electrons_so_far>0:
 		print 'Still need', n_electrons-n_electrons_so_far, 'electrons...doing another iteration.'
 	else:
@@ -446,6 +502,8 @@ pot_transp_elong = 2.
 object_radius = 1.
 t_object_center = (1.+4.*pot_transp_elong*debye_length)/v_drift
 t = 0.
+v_b_0 = 0. # inital box velocity
+a_b_0 = 0. # initial box acceleration
 if boltzmann_electrons:
     dt = 0.05*debye_length/v_th_i
 else:
@@ -460,6 +518,7 @@ object_center_mask = np.zeros_like(grid) # Could make 1 shorter
 if include_object:
     circular_cross_section(grid,1.e-8,1.,1.,1.,object_center_mask)
 potential = np.zeros_like(grid)
+background_potential = np.linspace(0.03, 0., num=n_points, endpoint=True).astype(np.float32)
 if decouple_ions_from_electrons:
     potential_electrons = np.zeros_like(grid)
 else:
@@ -494,28 +553,40 @@ if not boltzmann_electrons:
 			   periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover)
 
 initialize_mover(grid, object_mask, potential, dt, ion_charge_to_mass, largest_ion_index, ions, \
-		     empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles, \
+		     empty_ion_slots, current_empty_ion_slot, v_b=v_b_0, a_b=a_b_0, periodic_particles=periodic_particles, \
 		     use_pure_c_version=use_pure_c_mover)
 if not boltzmann_electrons:
     electron_charge_to_mass = -1./mass_ratio
     initialize_mover(grid, object_mask, potential_electrons, dt, electron_charge_to_mass, largest_electron_index, electrons, \
-			 empty_electron_slots, current_empty_electron_slot, \
+			 empty_electron_slots, current_empty_electron_slot, v_b=v_b_0, a_b=a_b_0,\
 			 periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover)
 injection_numbers = np.zeros(n_engines,dtype=np.int32)
 
 
-n_steps = 10
+n_steps = 2000
 storage_step = 1
 store_all_until_step = 100
-print_step = 1
+print_step = 100
 #mass_correction = math.sqrt(1./1836./mass_ratio)
 #debye_correction = 0.04/debye_length
 #n_steps = int(150000*mass_correction*debye_correction/8.)
 #storage_step = int(max(1,n_steps/100/mass_correction))
 #store_all_until_step = 0
-#print_step = storage_step
+#print_step = storage_stepv
+box = np.zeros([2,n_steps+1], dtype=np.float32) # initialization of box velocity and acceleration
+hole_relative_positions = np.zeros(n_steps, dtype=np.float32) # initialization of electron hole relative positions
+hole_velocities = np.zeros(n_steps, dtype=np.float32) # Array of electron hole relative velocities
+initial_transient_steps = 10 # Hole tracking will work only when we have a fully developped hole potential, need to skip the initial transient
+alpha = 0.00003 # Control parameter on hole position
+beta = 0.015 # Control parameter on hole velocity
 damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
+def hole_position_tracking(potential,dz,L,grid,fine_mesh,fine_dz):
+    search_center = fine_mesh.shape[0]/2
+    half_search_range = 3*int(math.floor(L/fine_dz))
+    signal = electric_field_filter(grid,np.gradient(potential,dz),L,fine_mesh)
+    plausible_range_signal = signal[search_center-half_search_range:search_center+half_search_range]
+    return fine_mesh[np.argmax(plausible_range_signal)+search_center-half_search_range]
 if (mpi_id==0):
     print n_steps, n_steps*dt
 for k in range(n_steps):
@@ -550,12 +621,14 @@ for k in range(n_steps):
     else:
 	dist_to_obj = 100.
     object_potential = -3.
-    if prescribe_potential:
-	potential = prescribed_potential(grid,t)
+    if prescribe_potential and t<prescribed_potential_growth_cycles*dt:
+	potential = prescribed_potential(grid,t,debye_length)
     elif quasineutral:
 	potential = np.log(np.maximum(ion_density,np.exp(object_potential)*np.ones_like(ion_density))) # TODO: add electron temp. dep.
 	potential[0] = 0.
 	potential[-1] = 0.
+    elif zero_electric_field_test:
+        potential = np.zeros_like(grid)
     elif solve_for_electric_field:
         np.subtract(ion_density,electron_density,out=charge_density)
         gauss_solve(grid, charge_density, debye_length, electric_field, periodic_electric_field=periodic_potential)
@@ -570,7 +643,7 @@ for k in range(n_steps):
 	    np.subtract(ion_density,electron_density,out=charge_density)
 	    np.subtract(charge_density,previous_charge_density,out=charge_derivative)
 	    charge_derivative /= dt
-	    if decouple_ions_from_electrons:
+	    if decouple_ions_from_electrons and t>prescribed_potential_growth_cycles*dt:
 		poisson_solve(grid, object_center_mask, charge_density, \
 				  debye_length, potential_electrons, \
 				  object_potential=object_potential, object_transparency=(1.-fraction_of_obj_pot), \
@@ -612,32 +685,37 @@ for k in range(n_steps):
 	    poisson_solve(grid, object_mask, charge_density, debye_length, potential, \
 			      object_potential=object_potential, object_transparency=0., \
 			      use_pure_c_version=use_pure_c_solver)
+    if set_background_potential:
+        potential = potential+background_potential
     if not decouple_ions_from_electrons:
 	potential_electrons = potential
     if (k%storage_step==0 or k<store_all_until_step):
 	    occupied_ion_slots = (ions[0]==ions[0])
 	    occupied_ion_slots[empty_ion_slots[0:current_empty_ion_slot[0]+1]] = False
 	    n_bins = 100
-	    ion_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
-	    n_bins = 100
-	    ion_hist_v_edges = np.arange(v_min_i,v_max_i+eps,(v_max_i-v_min_i)/n_bins)
-	    ion_hist2d, ion_hist_n_edges, ion_hist_v_edges = \
-		np.histogram2d(ions[0][occupied_ion_slots], ions[1][occupied_ion_slots], \
-				      bins=[ion_hist_n_edges,ion_hist_v_edges]) # could use range=[[z_min,z_max],[v_min,v_max]]
+#	    ion_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+	    v_bins = 100
+#	    ion_hist_v_edges = np.arange(v_min_i,v_max_i+eps,(v_max_i-v_min_i)/n_bins)
+	    ion_hist2d, ion_hist_n_centers, ion_hist_v_centers = \
+		histogram2d_uniform_grid(ions[0][occupied_ion_slots], ions[1][occupied_ion_slots], \
+				      z_min, z_max, v_min_i, v_max_i, n_bins, v_bins) # could use range=[[z_min,z_max],[v_min,v_max]]
 	    ion_hist2d = np.ascontiguousarray(ion_hist2d)
 	    comm.Allreduce(MPI.IN_PLACE, ion_hist2d, op=MPI.SUM)
 	    if not boltzmann_electrons:
 		occupied_electron_slots = (electrons[0]==electrons[0])
 		occupied_electron_slots[empty_electron_slots[0:current_empty_electron_slot[0]+1]] = False
 		n_bins = 100
-		electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
-		n_bins = 100
-		electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
-		electron_hist2d, electron_hist_n_edges, electron_hist_v_edges = \
-		    np.histogram2d(electrons[0][occupied_electron_slots], electrons[1][occupied_electron_slots], \
-					  bins=[electron_hist_n_edges,electron_hist_v_edges]) # could use range=[[z_min,z_max],[v_min,v_max]]
+#		electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
+		v_bins = 100
+#		electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
+		electron_hist2d, electron_hist_n_centers, electron_hist_v_centers = \
+		    histogram2d_uniform_grid(electrons[0][occupied_electron_slots], electrons[1][occupied_electron_slots], \
+					  z_min, z_max, v_min_e, v_max_e, n_bins, v_bins) # could use range=[[z_min,z_max],[v_min,v_max]]
 		electron_hist2d = np.ascontiguousarray(electron_hist2d)
 		comm.Allreduce(MPI.IN_PLACE, electron_hist2d, op=MPI.SUM)
+    if (k>initial_transient_steps): 
+        hole_relative_positions[k] = hole_position_tracking(potential,dz,debye_length,grid,fine_mesh,fine_dz) 
+    # give the relative hole position in the box by hole tracking
     if ((k%storage_step==0 or k<store_all_until_step) and mpi_id==0):
         times.append(t)
         object_masks.append(np.copy(object_mask))
@@ -652,19 +730,36 @@ for k in range(n_steps):
 	    electron_distribution_functions.append(np.copy(electron_hist2d))
     if (k%print_step==0 and mpi_id==0):
 	print k
-    move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
-		       background_ion_density, largest_ion_index, ions, ion_density, \
-		       empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles, \
+    hole_velocities[k] = (hole_relative_positions[k]-hole_relative_positions[k-1])/dt+box[0,k]
+    box[0,k+1] = (box[0,k]+box[0,k-1]+box[0,k-2]+box[0,k-3]+box[0,k-4]+box[0,k-5])/6.\
+                 +alpha*(hole_relative_positions[k]-0.)/dt+beta*(hole_relative_positions[k]-hole_relative_positions[k-1])/dt
+# The hole velocity at time k+1/2 is an exponential smoothing result of its values at previous time steps and measured hole velocity at time k-1/2
+    box[1,k] = (box[0,k+1]-box[0,k])/dt # Update box acceleration at every time step k
+    if (k>time_steps_immobile_ions):
+        move_particles(grid, object_mask, potential, 0., ion_charge_to_mass, \
+                       background_ion_density, largest_ion_index, ions, ion_density, \
+		       empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles, a_b=box[1,k],\
+		       use_pure_c_version=use_pure_c_mover)
+    else:
+        move_particles(grid, object_mask, potential, dt, ion_charge_to_mass, \
+                       background_ion_density, largest_ion_index, ions, ion_density, \
+		       empty_ion_slots, current_empty_ion_slot, periodic_particles=periodic_particles, a_b=box[1,k],\
 		       use_pure_c_version=use_pure_c_mover)
     if not boltzmann_electrons:
-	move_particles(grid, object_mask, potential_electrons, dt, electron_charge_to_mass, \
+        if (k<time_steps_immobile_electrons):
+            move_particles(grid, object_mask, potential_electrons, 0., electron_charge_to_mass, \
 			   background_electron_density, largest_electron_index, \
-			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot, \
+			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot, a_b=box[1,k],\
 			   periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover)
-    expected_ion_injection = 2*dt*v_th_i/math.sqrt(2*math.pi)*n_ions/(z_max-z_min)
+        else:
+            move_particles(grid, object_mask, potential_electrons, dt, electron_charge_to_mass, \
+			   background_electron_density, largest_electron_index, \
+			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot, a_b=box[1,k],\
+			   periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover,)
+    expected_ion_injection = expected_particle_injection(background_ion_density/dz,v_th_i,box[0,k],dt)
     n_ions_inject = int(expected_ion_injection)
     if not boltzmann_electrons:
-	expected_electron_injection = 2*dt*v_th_e/math.sqrt(2*math.pi)*n_electrons/(z_max-z_min)
+        expected_electron_injection = expected_particle_injection(background_electron_density/dz,v_th_e,box[0,k],dt)
 	n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
     # TODO: unify random number usage with sampler
@@ -680,7 +775,7 @@ for k in range(n_steps):
 	    sample = np.asarray(injection_sampler.get(int(injection_number))).T
     if n_ions_inject>0 and not periodic_particles:
 	inject_particles(n_ions_inject, grid, dt, v_th_i, background_ion_density, \
-			     injection_sampler, ions, empty_ion_slots, \
+			     injection_sampler, box[0,k], box[1,k], ions, empty_ion_slots, \
 			     current_empty_ion_slot, largest_ion_index, ion_density)
     if injection_sampler.shared_seed:
 	for injection_number in injection_numbers[mpi_id+1:]:
@@ -694,11 +789,11 @@ for k in range(n_steps):
 	injection_number = np.array(n_electrons_inject,dtype=np.int32)
         comm.Allgather(injection_number, injection_numbers)
 	if injection_sampler.shared_seed:
-	    for injection_number in injection_numbers[:mpi_id]:
+            for injection_number in injection_numbers[:mpi_id]:
 		sample = np.asarray(injection_sampler.get(int(injection_number))).T
 	if n_electrons_inject>0 and not periodic_particles:
 	    inject_particles(n_electrons_inject, grid, dt, v_th_e, background_electron_density, \
-				 injection_sampler, electrons, empty_electron_slots, \
+				 injection_sampler, box[0,k], box[1,k], electrons, empty_electron_slots, \
 				 current_empty_electron_slot, largest_electron_index, electron_density)
 	if injection_sampler.shared_seed:
 	    for injection_number in injection_numbers[mpi_id+1:]:
@@ -718,17 +813,18 @@ if (mpi_id==0):
     electron_densities_np = np.array(electron_densities, dtype=np.float32)
     charge_derivatives_np = np.array(charge_derivatives, dtype=np.float32)
     ion_distribution_functions_np = np.array(ion_distribution_functions, dtype=np.float32) # actuall int
-    electron_distribution_functions_np = np.array(electron_distribution_functions, dtype=np.float32) # actuall int
+    electron_distribution_functions_np = np.array(electron_distribution_functions, dtype=np.float32) # actuall int    
     filename_base = \
-	'l'+('%.4f' % debye_length)+'_d'+('%.3f' % v_drift)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)
+	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)
     print filename_base
     np.savez(filename_base, grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
-                    potentials_electrons=potentials_electrons_np, electric_fields=electric_fields, \
+                    potentials_electrons=potentials_electrons_np, electric_fields=electric_fields_np, \
 		    ion_densities=ion_densities_np, electron_densities=electron_densities_np, charge_derivatives=charge_derivatives_np, \
-		    ion_hist_n_edges=ion_hist_n_edges, ion_hist_v_edges=ion_hist_v_edges, \
+		    ion_hist_n_centers=ion_hist_n_centers, ion_hist_v_centers=ion_hist_v_centers, \
 		    ion_distribution_functions=ion_distribution_functions_np, \
-		    electron_hist_n_edges=electron_hist_n_edges, electron_hist_v_edges=electron_hist_v_edges, \
+		    electron_hist_n_centers=electron_hist_n_centers, electron_hist_v_centers=electron_hist_v_centers, \
 		    electron_distribution_functions=electron_distribution_functions_np, \
-		    background_ion_density=background_ion_density, background_electron_density=background_electron_density)
+		    background_ion_density=background_ion_density, background_electron_density=background_electron_density, \
+                    box_velocities=box[0], hole_relative_positions=hole_relative_positions, hole_velocities=hole_velocities)
 
 

@@ -1,11 +1,127 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <time.h>
+
+/* A C-program for MT19937: Real number version                */
+/*   genrand() generates one pseudorandom real number (double) */
+/* which is uniformly distributed on [0,1]-interval, for each  */
+/* call. sgenrand(seed) set initial values to the working area */
+/* of 624 words. Before genrand(), sgenrand(seed) must be      */
+/* called once. (seed is any 32-bit integer except for 0).     */
+/* Integer generator is obtained by modifying two lines.       */
+/*   Coded by Takuji Nishimura, considering the suggestions by */
+/* Topher Cooper and Marc Rieffel in July-Aug. 1997.           */
+
+/* This library is free software; you can redistribute it and/or   */
+/* modify it under the terms of the GNU Library General Public     */
+/* License as published by the Free Software Foundation; either    */
+/* version 2 of the License, or (at your option) any later         */
+/* version.                                                        */
+/* This library is distributed in the hope that it will be useful, */
+/* but WITHOUT ANY WARRANTY; without even the implied warranty of  */
+/* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.            */
+/* See the GNU Library General Public License for more details.    */
+/* You should have received a copy of the GNU Library General      */
+/* Public License along with this library; if not, write to the    */
+/* Free Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA   */ 
+/* 02111-1307  USA                                                 */
+
+/* Copyright (C) 1997 Makoto Matsumoto and Takuji Nishimura.       */
+/* Any feedback is very welcome. For any question, comments,       */
+/* see http://www.math.keio.ac.jp/matumoto/emt.html or email       */
+/* matumoto@math.keio.ac.jp                                        */
+
+/* Period parameters */  
+#define N 624
+#define M 397
+#define MATRIX_A 0x9908b0df   /* constant vector a */
+#define UPPER_MASK 0x80000000 /* most significant w-r bits */
+#define LOWER_MASK 0x7fffffff /* least significant r bits */
+
+/* Tempering parameters */   
+#define TEMPERING_MASK_B 0x9d2c5680
+#define TEMPERING_MASK_C 0xefc60000
+#define TEMPERING_SHIFT_U(y)  (y >> 11)
+#define TEMPERING_SHIFT_S(y)  (y << 7)
+#define TEMPERING_SHIFT_T(y)  (y << 15)
+#define TEMPERING_SHIFT_L(y)  (y >> 18)
+
+static unsigned long mt[N]; /* the array for the state vector  */
+static int mti=N+1; /* mti==N+1 means mt[N] is not initialized */
+
+/* initializing the array with a NONZERO seed */
+void
+sgenrand(seed)
+    unsigned long seed;	
+{
+    /* setting initial seeds to mt[N] using         */
+    /* the generator Line 25 of Table 1 in          */
+    /* [KNUTH 1981, The Art of Computer Programming */
+    /*    Vol. 2 (2nd Ed.), pp102]                  */
+    mt[0]= seed & 0xffffffff;
+    for (mti=1; mti<N; mti++)
+        mt[mti] = (69069 * mt[mti-1]) & 0xffffffff;
+}
+
+float /* generating reals */
+/* unsigned long */ /* for integer generation */
+genrand()
+{
+    unsigned long y;
+    static unsigned long mag01[2]={0x0, MATRIX_A};
+    /* mag01[x] = x * MATRIX_A  for x=0,1 */
+
+    if (mti >= N) { /* generate N words at one time */
+        int kk;
+
+        if (mti == N+1)   /* if sgenrand() has not been called, */
+            sgenrand(4357); /* a default initial seed is used   */
+
+        for (kk=0;kk<N-M;kk++) {
+            y = (mt[kk]&UPPER_MASK)|(mt[kk+1]&LOWER_MASK);
+            mt[kk] = mt[kk+M] ^ (y >> 1) ^ mag01[y & 0x1];
+        }
+        for (;kk<N-1;kk++) {
+            y = (mt[kk]&UPPER_MASK)|(mt[kk+1]&LOWER_MASK);
+            mt[kk] = mt[kk+(M-N)] ^ (y >> 1) ^ mag01[y & 0x1];
+        }
+        y = (mt[N-1]&UPPER_MASK)|(mt[0]&LOWER_MASK);
+        mt[N-1] = mt[M-1] ^ (y >> 1) ^ mag01[y & 0x1];
+
+        mti = 0;
+    }
+  
+    y = mt[mti++];
+    y ^= TEMPERING_SHIFT_U(y);
+    y ^= TEMPERING_SHIFT_S(y) & TEMPERING_MASK_B;
+    y ^= TEMPERING_SHIFT_T(y) & TEMPERING_MASK_C;
+    y ^= TEMPERING_SHIFT_L(y);
+
+    return ( (float)y / (unsigned long)0xffffffff ); /* reals */
+    /* return y; */ /* for integer generation */
+}
+
+
+
+/* this main() outputs first 1000 generated numbers  */
+/*main()
+{ 
+    int j;
+
+    sgenrand(4357); any nonzero integer can be used as a seed
+for (j=0; j<1000; j++) {
+        printf("%5f ", genrand());
+        if (j%8==7) printf("\n");
+    }
+    printf("\n");
+} */		   
+
 
 void move_particles_c(float *grid, float *object_mask, float *potential,
 		      float dt, float charge_to_mass, float background_density, int largest_index,
 		      float *particles, float *density, int *empty_slots,
-		      int *current_empty_slot, int update_position, int periodic_particles,
+		      int *current_empty_slot, float a_b, int update_position, int periodic_particles,
 		      int largest_allowed_slot, int n_points, int particle_storage_length) {
   float z_min = grid[0];
   float z_max = grid[n_points-1];
@@ -48,7 +164,7 @@ void move_particles_c(float *grid, float *object_mask, float *potential,
       if (left_index<0 || left_index>n_points-2)
 	printf("bad left_index: %d, %f, %f, %f\n", left_index, z_min, particles[ix], z_max);
       electric_field = -(potential[left_index+1]-potential[left_index])/dz;
-      accel = charge_to_mass*electric_field;
+      accel = charge_to_mass*electric_field-a_b;
       particles[iv] += accel*dt;
       if (update_position) {
 	particles[ix] += particles[iv]*dt;
@@ -418,3 +534,115 @@ void poisson_solve_c(float *grid, float *object_mask, float *charge, float debye
   free(periodic_w);
   free(result);
 }
+
+void histogram2d_uniform_grid_c(float *X, float *Y, float x_min, float step_x, float y_min, float step_y, 
+				int n_bins_x, int n_bins_y, int n_data, int *hist)
+{
+  int index_x;
+  int index_y;
+  int i;
+    for (i = 0; i < n_data; i++)
+      {
+	index_x = (int)floor((X[i]-x_min)/step_x);
+	index_y = (int)floor((Y[i]-y_min)/step_y);
+	if (index_x>=0 && index_x<=n_bins_x-1 && index_y>=0 && index_y<=n_bins_y-1)
+	  {
+	    hist[index_x*n_bins_y+index_y] = hist[index_x*n_bins_y+index_y]+1;
+	  }
+      }
+}
+
+void draw_velocities_c(int n, float v_th, float v_d, float *v_array)
+{
+  
+  int i;
+  float half_width;
+  float beta;
+  float ratio;
+  int rejection;
+  int n_Iteration;
+  float sample_1;
+  float sample_2;
+  float sample_3;
+  float v_max;
+  float v_lower;
+  float v_upper;
+  float v;
+  half_width = 5;
+  beta = v_d/(sqrt(2)*v_th);
+  ratio = (1/sqrt(M_PI)*exp(-pow(beta,2))-beta*(1-erf(beta)))/(1/sqrt(M_PI)*exp(-pow(beta,2))+beta*(1+erf(beta))); 
+  /*sgenrand(time(NULL));*/
+  for (i=0; i<n; i++)
+    {
+      rejection = 1;
+      n_Iteration = 1;
+      sample_1 = genrand()-1/(1+ratio);
+      if (sample_1>=0)
+	{
+	  while (rejection==1)
+	    {
+	      v_max = (-v_d+sqrt(pow(v_d,2)+4*pow(v_th,2)))/2;
+	      v_upper = v_max+half_width*v_th;
+	      v_lower = fmax(v_max-half_width*v_th,0.);
+	      sample_2 = genrand()*(v_upper-v_lower)+v_lower;
+	      v = sample_2;
+	      sample_3 = genrand();
+	      if (sample_3<=(fabs(v)*exp(-pow(v+v_d,2)/(2*pow(v_th,2))))/(fabs(v_max)*exp(-pow(v_max+v_d,2)/(2*pow(v_th,2)))))
+		{
+		  rejection = 0;
+		  v_array[i] = v;
+		}
+	      else
+		{
+		  n_Iteration ++;
+		}
+	    }
+	}
+      else
+	{
+	  while (rejection==1)
+	    {
+	      v_max = (-v_d-sqrt(pow(v_d,2)+4*pow(v_th,2)))/2;
+	      v_upper = fmin(v_max+half_width*v_th,0);
+	      v_lower = v_max-half_width*v_th;
+	      sample_2 = genrand()*(v_upper-v_lower)+v_lower;
+	      v = sample_2;
+	      sample_3 = genrand();
+	      if (sample_3<=(fabs(v)*exp(-pow(v+v_d,2)/(2*pow(v_th,2))))/(fabs(v_max)*exp(-pow(v_max+v_d,2)/(2*pow(v_th,2)))))
+		{
+		  rejection = 0;
+		  v_array[i] = v;
+		}
+	      else
+		{
+		  n_Iteration ++;
+		}
+	    }
+	}
+    }	 
+}		    
+
+void electric_field_filter_c(int n_points, float *grid, float *data_array, float L, int n_fine_mesh, float *fine_mesh, float *Res)
+{
+  
+  int i;
+  int j;
+  float sum;
+  for (i=0; i<n_fine_mesh; i++)
+  {
+    sum = 0;
+    for (j=0; j<n_points; j++)
+      {
+	sum = sum+tanh((fine_mesh[i]-grid[j])/L)/cosh((fine_mesh[i]-grid[j])/L)*data_array[j];
+      }
+    Res[i] = sum;
+  }
+}
+ 
+	     
+      
+  
+
+
+
+	
