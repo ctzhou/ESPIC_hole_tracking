@@ -361,6 +361,7 @@ void poisson_solve_c(float *grid, float *object_mask, float *charge, float debye
   float z_min = grid[0];
   float z_max = grid[n_points-1];
   float dz = (z_max-z_min)/(n_points-1);
+  float k = 1.;
   int j;
 
   double *diagonal, *lower_diagonal, *upper_diagonal, *right_hand_side;
@@ -401,8 +402,10 @@ void poisson_solve_c(float *grid, float *object_mask, float *charge, float debye
   for (j=0; j<n_points; j++)
     right_hand_side[j] *= -dz*dz/debye_length/debye_length;
   // Dirichlet left boundary
-  diagonal[0] = 1.;
-  upper_diagonal[0] = 0.;
+  //diagonal[0] = 1.;
+  //upper_diagonal[0] = 0.;
+  diagonal[0] = dz*dz/debye_length/debye_length*k/2.+dz/debye_length;
+  upper_diagonal[0] = dz*dz/debye_length/debye_length*k/2.-dz/debye_length;
   right_hand_side[0] = 0.;
   for (j=0; j<n_points; j++) {
     periodic_u[j] = 0.;
@@ -418,8 +421,10 @@ void poisson_solve_c(float *grid, float *object_mask, float *charge, float debye
     periodic_v[0] = -1.;
   } else {
     // Dirichlet right boundary
-    lower_diagonal[n_points-2] = 0.;
-    diagonal[n_points-1] = 1.;
+    //lower_diagonal[n_points-2] = 0.;
+    //diagonal[n_points-1] = 1.;
+    lower_diagonal[n_points-2] = dz*dz/debye_length/debye_length*k/2.-dz/debye_length;
+    diagonal[n_points-1] = dz*dz/debye_length/debye_length*k/2.+dz/debye_length;
     right_hand_side[n_points-1] = 0.;
   }
   for (j=0; j<n_points; j++) {

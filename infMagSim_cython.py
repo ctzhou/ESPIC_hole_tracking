@@ -228,7 +228,7 @@ def seedgenrand_c():
     sgenrand(226814)
 
 def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float dt, float v_th, float background_density, \
-                         uniform_2d_sampler, float v_d, float a_b, \
+                         uniform_2d_sampler, float v_d, float a_b, int k, np.ndarray[np.int32_t,ndim=2] particles_hist, \
                          np.ndarray[np.float32_t,ndim=2] particles, np.ndarray[np.int32_t,ndim=1] empty_slots, \
                          current_empty_slot_list, largest_index_list, np.ndarray[np.float32_t, ndim=1] density):
     cdef int largest_index = largest_index_list[0]
@@ -259,6 +259,7 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
         #if (velocity_sign<0.):
         # TODO: debye length shorter than eps could give problems with below
         particles[1,i] = velocities[l]
+        particles_hist[0,i] = k
         if (velocities[l]<0.):
             particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
             count_neg += 1
