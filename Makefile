@@ -16,5 +16,11 @@ infMagSim_cython.so: Makefile infMagSim_c.o infMagSim_cython.pyx
 infMagSim_c.o: infMagSim_c.c Makefile
 	gcc -pthread -fPIC -fwrapv -O2 -Wall -fno-strict-aliasing \
 		-o infMagSim_c.o -c infMagSim_c.c
+
+infMagSim_cython.pyx: infMagSim_cython.py
+	grep -v 'utf-8' infMagSim_cython.py | grep -v nbformat | \
+	 grep -v codecell | grep -v %load_ext | grep -v %cython \
+                > infMagSim_cython.pyx
+
 clean :
 	rm -f *.so *.o
