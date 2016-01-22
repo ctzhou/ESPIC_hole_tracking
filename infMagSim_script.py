@@ -17,8 +17,7 @@ if (mpi_id==0):
 from scipy.stats import norm
 from infMagSim_cython import *
 
-
-STORAGE_PATH = "/home/ctzhou/tmp"
+STORAGE_PATH = "~/tmp/"
 read_ion_dist_from_file = False
 smooth_ion_velocities = False
 read_electron_dist_from_file = read_ion_dist_from_file
