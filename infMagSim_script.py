@@ -1,8 +1,9 @@
+# Top level script for ESPIC.
+
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
 mpi_id = comm.Get_rank()
 n_engines = comm.size
-
 
 import io
 import os
@@ -13,16 +14,15 @@ if (mpi_id==0):
     import matplotlib as mpl
     mpl.use('Agg') # non-GUI backend
     import matplotlib.pyplot as plt
-#import ghalton
 from scipy.stats import norm
 from infMagSim_cython import *
 
-STORAGE_PATH = "~/tmp/"
+STORAGE_PATH = "/tmp/"
 read_ion_dist_from_file = False
 smooth_ion_velocities = False
 read_electron_dist_from_file = read_ion_dist_from_file
 smooth_electron_velocities = smooth_ion_velocities
-dist_filename = '/home/chaako/analysis/runTmp/dist_func.npz'
+dist_filename = ''
 project_read_particles = False
 projection_angle = np.pi*5/16.
 create_electron_dimple = True
@@ -153,7 +153,7 @@ number_of_debye_lengths_across = int((z_max-z_min)/debye_length)
 number_of_uniforming_bins = number_of_debye_lengths_across*4
 number_per_injection_batch = 100
 if (mpi_id==0):
-    print dz, debye_length
+    print 'dz, debye_length', dz, debye_length
 
 seedgenrand_c() # seed C MT19937 random number generator
 
@@ -276,7 +276,7 @@ else:
 sigma = 10.
 v_th_i = 1.
 v_d_i = 0.
-n_ions = 2000000
+n_ions = 200000
 # This is the initial number of ions inside the computation domain
 n_ions_infinity = n_ions 
 extra_storage_factor = 6
@@ -538,7 +538,7 @@ else:
     dt = 0.3*debye_length/v_th_e
 ion_charge_to_mass = 1
 if (mpi_id==0):
-    print t_object_center, dt
+    print 't_object_center, dt', t_object_center, dt
 
 
 object_mask = np.zeros_like(grid) # Could make 1 shorter
@@ -593,7 +593,7 @@ if not boltzmann_electrons:
 injection_numbers = np.zeros(n_engines,dtype=np.int32)
 
 
-n_steps = 10000
+n_steps = 500
 storage_step = 10
 store_all_until_step = 10
 print_step = 100
@@ -625,7 +625,7 @@ def hole_position_tracking(potential,dz,L,grid,fine_mesh,fine_dz):
     plausible_range_signal = signal[search_center-half_search_range:search_center+half_search_range]
     return fine_mesh[np.argmax(plausible_range_signal)+search_center-half_search_range]
 if (mpi_id==0):
-    print n_steps, n_steps*dt
+    print 'n_steps, n_steps*dt', n_steps, n_steps*dt
 for k in range(n_steps):
     if simulate_moon:
 	if k==1: # simulate moon by knocking out particles
@@ -715,7 +715,7 @@ for k in range(n_steps):
 		    potential_converged = True
 		potential_iter += 1
 #	    if mpi_id==0:
-#		print potential_iter, max_potential_change
+#		print 'potential_iter, max_potential_change', potential_iter, max_potential_change
 	else:
 	    fraction_of_obj_pot = 1.
 	    np.subtract(ion_density,electron_density,out=charge_density)
@@ -779,7 +779,7 @@ for k in range(n_steps):
 	    electron_distribution_functions.append(np.copy(electron_hist2d))
             trapped_electron_distribution_functions.append(np.copy(electron_inject0_hist2d))
     if (k%print_step==0 and mpi_id==0):
-	print k
+	print 'Step ', k, '  Max potentials each step:'
     hole_velocities[k] = (hole_relative_positions[k]-hole_relative_positions[k-1])/dt+box[0,k] # Apply some filtering to smooth out the hole velocity
     hole_velocities_f = signal.filtfilt(B,A,hole_velocities[0:k+1],padlen=0)
     if moving_box_simulation:
@@ -877,6 +877,10 @@ for k in range(n_steps):
 	    for injection_number in injection_numbers[mpi_id+1:]:
 		sample = np.asarray(injection_sampler.get(int(injection_number))).T
     t += dt
+    if(mpi_id==0):
+        print  ('%.2f' % np.max(potential)) ,
+        if((k+1)%10  == 0):
+            print
 if (mpi_id==0):
     print times[0], dt, times[len(times)-1]
 

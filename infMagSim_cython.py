@@ -508,8 +508,10 @@ def histogram2d_uniform_grid(np.ndarray[np.float32_t, ndim=1] X, np.ndarray[np.f
                                  int n_bins_x, int n_bins_y):
     cdef float step_x = (x_max-x_min)/n_bins_x
     cdef float step_y = (y_max-y_min)/n_bins_y
-    cdef np.ndarray[np.float32_t,ndim=1] x_hist_centers = np.linspace(x_min+step_x/2,x_max-step_x/2.,n_bins_x,dtype=np.float32)
-    cdef np.ndarray[np.float32_t,ndim=1] y_hist_centers = np.linspace(y_min+step_y/2,y_max-step_y/2.,n_bins_y,dtype=np.float32)
+#    cdef np.ndarray[np.float32_t,ndim=1] x_hist_centers = np.linspace(x_min+step_x/2,x_max-step_x/2.,n_bins_x,dtype=np.float32)
+    cdef np.ndarray[np.float32_t,ndim=1] x_hist_centers = np.float32(np.linspace(x_min+step_x/2.,x_max-step_x/2.,n_bins_x))
+#    cdef np.ndarray[np.float32_t,ndim=1] y_hist_centers = np.linspace(y_min+step_y/2,y_max-step_y/2.,n_bins_y,dtype=np.float32)
+    cdef np.ndarray[np.float32_t,ndim=1] y_hist_centers = np.float32(np.linspace(y_min+step_y/2.,y_max-step_y/2.,n_bins_y))
     cdef np.ndarray[np.int32_t,ndim=2] histogram_2d = np.zeros((n_bins_x,n_bins_y),dtype=np.int32)
     cdef int n_data = np.shape(X)[0]
     histogram2d_uniform_grid_c(&X[0], &Y[0], x_min, step_x, y_min, step_y, n_bins_x, n_bins_y, n_data, <int*> &histogram_2d[0,0]) 
