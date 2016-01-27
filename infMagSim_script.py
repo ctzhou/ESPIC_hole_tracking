@@ -812,8 +812,8 @@ for k in range(n_steps):
 			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot, a_b=box[1,k],\
 			   periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover,)
     if counter_streaming_ion_beams:
-        expected_ion_injection_1 = expected_particle_injection(background_ion_density/dz/2.,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k]-v_d_1,dt)
-        expected_ion_injection_2 = expected_particle_injection(background_ion_density/dz/2.,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k]-v_d_2,dt)
+        expected_ion_injection_1 = expected_particle_injection(n_ions_infinity/(z_max-z_min)/2.,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k]-v_d_1,dt)
+        expected_ion_injection_2 = expected_particle_injection(n_ions_infinity/(z_max-z_min)/2.,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k]-v_d_2,dt)
         n_ions_inject_1 = int(expected_ion_injection_1)
         n_ions_inject_2 = int(expected_ion_injection_2)
         if (expected_ion_injection_1-n_ions_inject_1)>np.random.rand():
@@ -822,12 +822,12 @@ for k in range(n_steps):
             n_ions_inject_2 += 1
         n_ions_inject = n_ions_inject_1+n_ions_inject_2
     else:
-        expected_ion_injection = expected_particle_injection(background_ion_density/dz,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k],dt)
+        expected_ion_injection = expected_particle_injection(n_ions_infinity/(z_max-z_min),v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k],dt)
         n_ions_inject = int(expected_ion_injection)
         if (expected_ion_injection-n_ions_inject)>np.random.rand():
             n_ions_inject += 1
     if not boltzmann_electrons:
-        expected_electron_injection = expected_particle_injection(background_electron_density/dz,v_th_e,box[0,k],dt)
+        expected_electron_injection = expected_particle_injection(n_electrons_infinity/(z_max-z_min),v_th_e,box[0,k],dt)
 	n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
     # TODO: unify random number usage with sampler
