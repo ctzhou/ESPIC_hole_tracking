@@ -224,8 +224,8 @@ def draw_velocities(int n_inject, float v_th, float v_d):
 cdef extern void draw_velocities_c(int n, float v_th, float v_d, float *v_array)
 cdef extern void sgenrand(unsigned long seed)
 
-def seedgenrand_c():
-    sgenrand(226814)
+def seedgenrand_c(unsigned long seed):
+    sgenrand(seed)
 
 def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float dt, float v_th, float background_density, \
                          uniform_2d_sampler, float v_d, float a_b, int k, np.ndarray[np.int32_t,ndim=2] particles_hist, \

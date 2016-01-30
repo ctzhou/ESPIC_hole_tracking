@@ -586,13 +586,32 @@ void draw_velocities_c(int n, float v_th, float v_d, float *v_array)
 	{
 	  while (rejection==1)
 	    {
+	      if (n_Iteration==1000)
+		{
+		  printf("Warning: method draw_velocities_c doesn't converge");
+		  printf("\n");
+		  printf("v_max: ");
+		  printf("%5f ",v_max);
+		  printf("v_upper: ");
+		  printf("%5f ",v_upper);
+		  printf("v_lower: ");
+		  printf("%5f ",v_lower);
+		  printf("v_d: ");
+		  printf("%5f ",v_d);
+		  printf("v_th: ");
+		  printf("%5f ",v_th);
+		  printf("v: ");
+		  printf("%5f ",v);
+		  printf("%5f ",(fabs(v)*exp(-pow(v+v_d,2)/(2*pow(v_th,2))))/(fabs(v_max)*exp(-pow(v_max+v_d,2)/(2*pow(v_th,2)))));
+		  printf("\n");
+		}
 	      v_max = (-v_d+sqrt(pow(v_d,2)+4*pow(v_th,2)))/2;
 	      v_upper = v_max+half_width*v_th;
 	      v_lower = fmax(v_max-half_width*v_th,0.);
 	      sample_2 = genrand()*(v_upper-v_lower)+v_lower;
 	      v = sample_2;
 	      sample_3 = genrand();
-	      if (sample_3<=(fabs(v)*exp(-pow(v+v_d,2)/(2*pow(v_th,2))))/(fabs(v_max)*exp(-pow(v_max+v_d,2)/(2*pow(v_th,2)))))
+	      if (log(sample_3)<=log(fabs(v)/fabs(v_max))+(pow(v_max+v_d,2)-pow(v+v_d,2))/(2*pow(v_th,2)))
 		{
 		  rejection = 0;
 		  v_array[i] = v;
@@ -607,13 +626,32 @@ void draw_velocities_c(int n, float v_th, float v_d, float *v_array)
 	{
 	  while (rejection==1)
 	    {
+	      if (n_Iteration==1000)
+		{
+		  printf("Warning: method draw_velocities_c doesn't converge");
+		  printf("\n");
+		  printf("v_max: ");
+		  printf("%5f ",v_max);
+		  printf("v_upper: ");
+		  printf("%5f ",v_upper);
+		  printf("v_lower: ");
+		  printf("%5f ",v_lower);
+		  printf("v_d: ");
+		  printf("%5f ",v_d);
+		  printf("v_th: ");
+		  printf("%5f ",v_th);
+		  printf("v: ");
+		  printf("%5f ",v);
+		  printf("%5f ",(fabs(v)*exp(-pow(v+v_d,2)/(2*pow(v_th,2))))/(fabs(v_max)*exp(-pow(v_max+v_d,2)/(2*pow(v_th,2)))));
+		  printf("\n");
+		}
 	      v_max = (-v_d-sqrt(pow(v_d,2)+4*pow(v_th,2)))/2;
 	      v_upper = fmin(v_max+half_width*v_th,0);
 	      v_lower = v_max-half_width*v_th;
 	      sample_2 = genrand()*(v_upper-v_lower)+v_lower;
 	      v = sample_2;
 	      sample_3 = genrand();
-	      if (sample_3<=(fabs(v)*exp(-pow(v+v_d,2)/(2*pow(v_th,2))))/(fabs(v_max)*exp(-pow(v_max+v_d,2)/(2*pow(v_th,2)))))
+	      if (log(sample_3)<=log(fabs(v)/fabs(v_max))+(pow(v_max+v_d,2)-pow(v+v_d,2))/(2*pow(v_th,2)))
 		{
 		  rejection = 0;
 		  v_array[i] = v;

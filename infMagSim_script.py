@@ -27,7 +27,7 @@ project_read_particles = False
 projection_angle = np.pi*5/16.
 create_electron_dimple = True
 moving_box_simulation = True # Using a box that tracks the movement of the hole
-counter_streaming_ion_beams = True # Simulate counterstreaming ion beams
+counter_streaming_ion_beams = False # Simulate counterstreaming ion beams
 v_d_1 = 5. # drift velocity of first ion beam
 v_d_2 = -5. # drift velocity of second ion beam
 periodic_particles = False
@@ -39,6 +39,8 @@ prescribed_potential_growth_cycles = 600
 set_background_acceleration = False
 start_step_background_acc = 5000
 end_step_background_acc = 8000
+start_step_background_acc_phase2 = 15000
+end_step_background_acc_phase2 = 22000
 def prescribed_potential(grid, t, debye_length=1.):
     z_min = grid[0]
     z_max = grid[-1]
@@ -137,7 +139,7 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
 
 z_min = -3.
 z_max = 3.
-n_cells = 500
+n_cells = 200
 n_points = n_cells+1
 n_tracking_mesh_points = 1001
 eps = 1e-6
@@ -155,9 +157,9 @@ number_per_injection_batch = 100
 if (mpi_id==0):
     print 'dz, debye_length', dz, debye_length
 
-seedgenrand_c() # seed C MT19937 random number generator
-
 seed = 384+mpi_id*mpi_id*mpi_id
+seedgenrand_c(seed) # seed C MT19937 random number generator
+
 
 #def histogram2d_uniform_grid(X,Y,x_min,x_max,y_min,y_max,n_bins_x,n_bins_y,eps):
 #    print 'Called','Histogram2D'
@@ -273,10 +275,10 @@ if quiet_start_and_injection:
 else:
     injection_sampler = uniform_2d_sampler
 
-sigma = 10.
+sigma = 40. #sigma is the temperature ratio Te/Ti
 v_th_i = 1.
 v_d_i = 0.
-n_ions = 200000
+n_ions = 500000
 # This is the initial number of ions inside the computation domain
 n_ions_infinity = n_ions 
 extra_storage_factor = 6
@@ -547,6 +549,7 @@ if include_object:
     circular_cross_section(grid,1.e-8,1.,1.,1.,object_center_mask)
 potential = np.zeros_like(grid)
 background_potential = np.linspace(2.3, 0., num=n_points, endpoint=True).astype(np.float32)
+background_potential_phase2 = np.linspace(2.3, 0., num=n_points, endpoint=True).astype(np.float32)
 potential_ions = potential 
 if decouple_ions_from_electrons:
     potential_electrons = np.zeros_like(grid)
@@ -593,7 +596,7 @@ if not boltzmann_electrons:
 injection_numbers = np.zeros(n_engines,dtype=np.int32)
 
 
-n_steps = 500
+n_steps = 10000
 storage_step = 10
 store_all_until_step = 10
 print_step = 100
@@ -612,8 +615,8 @@ Wn = .002 # Cut-off frequency of Butterworth filter
 N_filter = 2 # Order of Butterworth filter
 #W_smoothing = 2.*debye_length/v_th_e # Rectangle smoothing window length in the control law
 W_smoothing = 0.
-alpha = 10.*1e-3*v_th_e**2/debye_length**2 # Control parameter on hole position 8./9. default
-beta = 4.*v_th_e/debye_length # Control parameter on hole velocity .05 default
+alpha = 15.*1e-3*v_th_e**2/debye_length**2 # Control parameter on hole position 10. default
+beta = 5.*v_th_e/debye_length # Control parameter on hole velocity 5. default
 damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
 B, A = signal.butter(N_filter,Wn,output='ba') # Numerator and denominator of IIR filter 
@@ -726,6 +729,10 @@ for k in range(n_steps):
         potential_ions = potential+background_potential
         ions_extra[1,k] = (background_potential[1]-background_potential[0])/dz
         ions_extra[0,k] = ions_extra[0,k-1]+ions_extra[1,k]*dt
+    elif set_background_acceleration and k>=start_step_background_acc_phase2 and k<end_step_background_acc_phase2:
+        potential_ions = potential+background_potential_phase2
+        ions_extra[1,k] = (background_potential_phase2[1]-background_potential_phase2[0])/dz
+        ions_extra[0,k] = ions_extra[0,k-1]+ions_extra[1,k]*dt
     else:
         potential_ions = potential
         ions_extra[0,k] = ions_extra[0,k-1]
@@ -812,8 +819,8 @@ for k in range(n_steps):
 			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot, a_b=box[1,k],\
 			   periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover,)
     if counter_streaming_ion_beams:
-        expected_ion_injection_1 = expected_particle_injection(background_ion_density/dz/2.,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k]-v_d_1,dt)
-        expected_ion_injection_2 = expected_particle_injection(background_ion_density/dz/2.,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k]-v_d_2,dt)
+        expected_ion_injection_1 = expected_particle_injection(n_ions_infinity/(z_max-z_min)/2.,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k]-v_d_1,dt)
+        expected_ion_injection_2 = expected_particle_injection(n_ions_infinity/(z_max-z_min)/2.,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k]-v_d_2,dt)
         n_ions_inject_1 = int(expected_ion_injection_1)
         n_ions_inject_2 = int(expected_ion_injection_2)
         if (expected_ion_injection_1-n_ions_inject_1)>np.random.rand():
@@ -822,12 +829,12 @@ for k in range(n_steps):
             n_ions_inject_2 += 1
         n_ions_inject = n_ions_inject_1+n_ions_inject_2
     else:
-        expected_ion_injection = expected_particle_injection(background_ion_density/dz,v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k],dt)
+        expected_ion_injection = expected_particle_injection(n_ions_infinity/(z_max-z_min),v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k],dt)
         n_ions_inject = int(expected_ion_injection)
         if (expected_ion_injection-n_ions_inject)>np.random.rand():
             n_ions_inject += 1
     if not boltzmann_electrons:
-        expected_electron_injection = expected_particle_injection(background_electron_density/dz,v_th_e,box[0,k],dt)
+        expected_electron_injection = expected_particle_injection(n_electrons_infinity/(z_max-z_min),v_th_e,box[0,k],dt)
 	n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
     # TODO: unify random number usage with sampler
@@ -897,15 +904,19 @@ if (mpi_id==0):
     ion_distribution_functions_np = np.array(ion_distribution_functions, dtype=np.float32) # actuall int
     electron_distribution_functions_np = np.array(electron_distribution_functions, dtype=np.float32) # actuall int
     trapped_electron_distribution_functions_np = np.array(trapped_electron_distribution_functions, dtype=np.float32)
-    if set_background_acceleration: 
+    n_ions_total = n_ions*n_engines
+    if set_background_acceleration and not counter_streaming_ion_beams: 
         filename_base = \
-	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_ions_acc'
-    elif counter_streaming_ion_beams:
+	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_ions_acc'
+    elif counter_streaming_ion_beams and not set_background_acceleration:
         filename_base = \
-            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)
+            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)
+    elif counter_streaming_ion_beams and set_background_acceleration:
+        filename_base = \
+            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)+'_ions_acc'
     else:
         filename_base = \
-	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)
+	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)
     print filename_base
     try:
         np.savez(os.path.join(STORAGE_PATH,filename_base), grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
