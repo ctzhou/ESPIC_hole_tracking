@@ -12,13 +12,15 @@ cimport cython
 import numpy as np
 cimport numpy as np
 import math
+import time
+import matplotlib.pyplot as plt
 import cython_gsl as gsl
 cimport cython_gsl as gsl
 
 cdef extern void move_particles_c(float *grid, float *object_mask, float *potential,
                                   float dt, float charge_to_mass, float background_density, int largest_index,
                                   float *particles, float *density, int *empty_slots,
-                                  int *current_empty_slot, int update_position, int periodic_particles,
+                                  int *current_empty_slot, float a_b, int update_position, int periodic_particles,
                                   int largest_allowed_slot, int n_points, int particle_storage_length)
 
 cdef extern void move_particles_c_minimal(float *grid, float *object_mask, float *potential,
@@ -32,7 +34,7 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
                        float dt, float charge_to_mass, float background_density, largest_index_list, \
                        np.ndarray[np.float32_t, ndim=2] particles, np.ndarray[np.float32_t, ndim=1] density, \
                        np.ndarray[np.int32_t, ndim=1] empty_slots, \
-                       current_empty_slot_list, int update_position=True, int periodic_particles=False, \
+                       current_empty_slot_list, float a_b, int update_position=True, int periodic_particles=False, \
                        int use_pure_c_version=False):
     cdef int largest_index = largest_index_list[0]
     cdef int current_empty_slot = current_empty_slot_list[0]
@@ -44,13 +46,13 @@ def move_particles(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.float32_
     if use_pure_c_version:
         move_particles_c(&grid[0], &object_mask[0], &potential[0], dt, charge_to_mass, background_density,\
                              largest_index, &particles[0,0], &density[0], <int*> &empty_slots[0], \
-                             &current_empty_slot, update_position, periodic_particles,\
+                             &current_empty_slot, a_b, update_position, periodic_particles,\
                              largest_allowed_slot, n_points, particle_storage_length)
         current_empty_slot_list[0] = current_empty_slot
     else:
         move_particles_cython(grid, object_mask, potential, dt, charge_to_mass, background_density,\
                                   largest_index_list, particles, density, empty_slots, \
-                                  current_empty_slot_list, update_position, periodic_particles)
+                                  current_empty_slot_list, a_b, update_position, periodic_particles)
 
 #@cython.boundscheck(False) # turn of bounds-checking for this function (no speed-up seen)
 #@cython.wraparound(False) # turn of negative indices for this function (no speed-up seen)
@@ -59,7 +61,7 @@ def move_particles_cython(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.f
                        float dt, float charge_to_mass, float background_density, largest_index_list, \
                        np.ndarray[np.float32_t, ndim=2] particles, np.ndarray[np.float32_t, ndim=1] density, \
                        np.ndarray[np.int32_t, ndim=1] empty_slots, \
-                       current_empty_slot_list, int update_position=True, int periodic_particles=False):
+                       current_empty_slot_list, float a_b, int update_position=True, int periodic_particles=False):
     cdef int largest_index = largest_index_list[0]
     cdef int current_empty_slot = current_empty_slot_list[0]
     cdef int largest_allowed_slot = len(empty_slots)-1
@@ -102,7 +104,7 @@ def move_particles_cython(np.ndarray[np.float32_t, ndim=1] grid, np.ndarray[np.f
             if (left_index<0 or left_index>n_points-2):
                 print 'bad left_index:', left_index, z_min, particles[0,i], z_max
             electric_field = -(potential[left_index+1]-potential[left_index])/dz
-            accel = charge_to_mass*electric_field
+            accel = charge_to_mass*electric_field-a_b
             particles[1,i] += accel*dt
             if (update_position):
                 particles[0,i] += particles[1,i]*dt
@@ -159,25 +161,74 @@ def accumulate_density(grid, object_mask, background_density, largest_index,  pa
                            use_pure_c_version=False):
     potential = np.zeros_like(grid)
     move_particles(grid, object_mask, potential, 0, 1, background_density, largest_index, particles, density, \
-                       empty_slots, current_empty_slot_list, update_position=False, \
+                       empty_slots, current_empty_slot_list, a_b=0., update_position=False, \
                        periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_version)
 
 def initialize_mover(grid, object_mask, potential, dt, chage_to_mass, largest_index, particles, \
-                         empty_slots, current_empty_slot_list, periodic_particles=False, \
+                         empty_slots, current_empty_slot_list, v_b, a_b, periodic_particles=False, \
                          use_pure_c_version=False):
     density = np.zeros_like(grid)
     move_particles(grid, object_mask, potential, -dt/2, chage_to_mass, 1, largest_index, \
-                       particles, density, empty_slots, current_empty_slot_list, update_position=False, \
+                       particles, density, empty_slots, current_empty_slot_list, a_b=a_b, update_position=False, \
                        periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_version)
+    largest_index_number = largest_index[0]
+    for i in range(largest_index_number+1):
+        particles[1,i] = particles[1,i]-v_b
 
-def draw_velocities(uniform_sample,v_th,v_d=0):
-    if (v_d!=0):
-        print 'drift not implemented'
-    scaled_sample = 2.*uniform_sample-1.
-    return np.sign(scaled_sample)*v_th*np.sqrt(-np.log(np.fabs(scaled_sample))*2)
+def draw_velocities(int n_inject, float v_th, float v_d):
+    cdef np.ndarray[np.float32_t,ndim=1] v_array = np.zeros(n_inject,dtype=np.float32)
+    cdef float half_width = 5.
+# half width of the truncation window in unit of v_th    
+    cdef float beta = v_d/(np.sqrt(2.)*v_th)
+    cdef float ratio = (1./np.sqrt(np.pi)*np.exp(-np.power(beta,2.))-beta*(1.-math.erf(beta)))/(1./np.sqrt(np.pi)\
+            *np.exp(-np.power(beta,2.))+beta*(1.+math.erf(beta)))
+    cdef int i
+    for i in np.arange(n_inject):
+        rejection = True
+        n_Iteration = 1
+        sample_1 = np.random.rand(1)[0]-1./(1.+ratio)
+        if sample_1>=0:
+# sample_1>=0, the particle will be injected from the left side of computational domain
+            while rejection:
+                v_max = (-v_d+np.sqrt(np.power(v_d,2.)+4.*np.power(v_th,2.)))/2.
+                v_upper = v_max+half_width*v_th
+                v_lower = max(v_max-half_width*v_th,0.)
+                uniform_sample = np.random.rand(2)
+                sample_2 = uniform_sample[0]*(v_upper-v_lower)+v_lower
+                v = sample_2
+                sample_3 = uniform_sample[1]
+                if sample_3<=(abs(v)*np.exp(-np.power(v+v_d,2.)/(2*np.power(v_th,2.))))/(abs(v_max)\
+                   *np.exp(-np.power(v_max+v_d,2.)/(2*np.power(v_th,2.)))):
+                    rejection = False
+                    v_array[i] = v
+                else:
+                    n_Iteration += 1
+        else:
+# sample_1<0, the particle will be injected from the right side of computational domain
+            while rejection:
+                v_max = (-v_d-np.sqrt(np.power(v_d,2.)+4.*np.power(v_th,2.)))/2.
+                v_upper = min(v_max+half_width*v_th,0.)
+                v_lower = v_max-half_width*v_th
+                uniform_sample = np.random.rand(2)
+                sample_2 = uniform_sample[0]*(v_upper-v_lower)+v_lower
+                v = sample_2
+                sample_3 = uniform_sample[1]
+                if sample_3<=(abs(v)*np.exp(-np.power(v+v_d,2.)/(2*np.power(v_th,2.))))/(abs(v_max)*\
+                   np.exp(-np.power(v_max+v_d,2.)/(2*np.power(v_th,2.)))):
+                    rejection = False
+                    v_array[i] = v
+                else:
+                    n_Iteration += 1   
+    return v_array
+
+cdef extern void draw_velocities_c(int n, float v_th, float v_d, float *v_array)
+cdef extern void sgenrand(unsigned long seed)
+
+def seedgenrand_c(unsigned long seed):
+    sgenrand(seed)
 
 def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float dt, float v_th, float background_density, \
-                         uniform_2d_sampler, \
+                         uniform_2d_sampler, float v_d, float a_b, int k, np.ndarray[np.int32_t,ndim=2] particles_hist, \
                          np.ndarray[np.float32_t,ndim=2] particles, np.ndarray[np.int32_t,ndim=1] empty_slots, \
                          current_empty_slot_list, largest_index_list, np.ndarray[np.float32_t, ndim=1] density):
     cdef int largest_index = largest_index_list[0]
@@ -191,9 +242,11 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef int left_index
     #cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*np.random.rand(n_inject).astype(np.float32)
     #cdef np.ndarray[np.float32_t,ndim=1] velocities = draw_velocities(np.random.rand(n_inject).astype(np.float32),v_th)
-    uniform_2d_sample = uniform_2d_sampler.get(n_inject).astype(np.float32).T
+    cdef np.ndarray[np.float32_t,ndim=2] uniform_2d_sample = uniform_2d_sampler.get(n_inject).astype(np.float32).T
     cdef np.ndarray[np.float32_t,ndim=1] partial_dt = dt*uniform_2d_sample[0]
-    cdef np.ndarray[np.float32_t,ndim=1] velocities = draw_velocities(uniform_2d_sample[1],v_th)
+    cdef np.ndarray[np.float32_t,ndim=1] velocities = np.zeros(n_inject,dtype=np.float32)
+    draw_velocities_c(n_inject, v_th, v_d, &velocities[0])
+    #cdef np.ndarray[np.float32_t,ndim=1] velocities = draw_velocities(n_inject,v_th,v_d)
     cdef int l,i
     #for velocity_sign in [-1.,1.]:
     cdef int count_pos=0
@@ -204,14 +257,16 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
         i = empty_slots[current_empty_slot]
         #particles[1,i] = velocity_sign*np.fabs(velocities[l])
         #if (velocity_sign<0.):
-        particles[1,i] = velocities[l]
         # TODO: debye length shorter than eps could give problems with below
+        particles[1,i] = velocities[l]
+        particles_hist[0,i] = k
         if (velocities[l]<0.):
             particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
             count_neg += 1
         else:
             particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
             count_pos += 1
+        particles[1,i] = velocities[l] - a_b*partial_dt[l] # Update the velocity taking into account the acceleration of the frame
         if (i>largest_index):
             largest_index = i
         left_index = int((particles[0,i]-z_min)/dz)
@@ -445,6 +500,33 @@ cdef extern from "gsl/gsl_qrng.h":
     gsl_qrng_type * gsl_qrng_halton
     gsl_qrng_type * gsl_qrng_reversehalton
 
+cdef extern void histogram2d_uniform_grid_c(float *X, float *Y, float x_min, float step_x, float y_min, \
+                                                float step_y, int n_bins_x, int n_bins_y, int n_data, int *hist)
+
+def histogram2d_uniform_grid(np.ndarray[np.float32_t, ndim=1] X, np.ndarray[np.float32_t, ndim=1] Y, \
+                                 float x_min, float x_max, float y_min, float y_max, \
+                                 int n_bins_x, int n_bins_y):
+    cdef float step_x = (x_max-x_min)/n_bins_x
+    cdef float step_y = (y_max-y_min)/n_bins_y
+#    cdef np.ndarray[np.float32_t,ndim=1] x_hist_centers = np.linspace(x_min+step_x/2,x_max-step_x/2.,n_bins_x,dtype=np.float32)
+    cdef np.ndarray[np.float32_t,ndim=1] x_hist_centers = np.float32(np.linspace(x_min+step_x/2.,x_max-step_x/2.,n_bins_x))
+#    cdef np.ndarray[np.float32_t,ndim=1] y_hist_centers = np.linspace(y_min+step_y/2,y_max-step_y/2.,n_bins_y,dtype=np.float32)
+    cdef np.ndarray[np.float32_t,ndim=1] y_hist_centers = np.float32(np.linspace(y_min+step_y/2.,y_max-step_y/2.,n_bins_y))
+    cdef np.ndarray[np.int32_t,ndim=2] histogram_2d = np.zeros((n_bins_x,n_bins_y),dtype=np.int32)
+    cdef int n_data = np.shape(X)[0]
+    histogram2d_uniform_grid_c(&X[0], &Y[0], x_min, step_x, y_min, step_y, n_bins_x, n_bins_y, n_data, <int*> &histogram_2d[0,0]) 
+#    cdef np.ndarray[np.float32_t,ndim=3] data_2d = np.dstack((X,Y))
+#    cdef np.ndarray[np.float32_t,ndim=1] C
+#    cdef int n_x
+#    cdef int n_y
+#    for C in data_2d[0]:
+#        n_x = np.floor((C[0]-x_min)/step_x)
+#        n_y = np.floor((C[1]-y_min)/step_y)
+#        if (n_y>=0 and n_y<=n_bins_y-1) and (n_x>=0 and n_x<=n_bins_x-1):
+#            histogram_2d[n_x,n_y] += 1
+    return histogram_2d, x_hist_centers, y_hist_centers
+
+
 cdef class sobol_sequencer:
     cdef gsl.gsl_qrng *quasi_random_generator
     #cdef gsl.gsl_rng *quasi_random_generator
@@ -479,4 +561,14 @@ def inverse_gaussian_cdf_in_place(np.ndarray[np.float32_t,ndim=1] samples):
     cdef int n_values = len(samples)
     for i in range(n_values):
         samples[i] = gsl_cdf_ugaussian_Pinv(samples[i])
+
+cdef extern void electric_field_filter_c(int n_points, float *grid, float *data_array, float L, int n_fine_mesh,float *fine_mesh, float *Res)
+
+def electric_field_filter(np.ndarray[np.float32_t,ndim=1] grid, np.ndarray[np.float32_t,ndim=1] data_array, float L, \
+                              np.ndarray[np.float32_t,ndim=1] fine_mesh):
+    cdef np.ndarray[np.float32_t,ndim=1] Res = np.zeros_like(fine_mesh)
+    cdef int n_points = np.shape(grid)[0]
+    cdef int n_fine_mesh = np.shape(fine_mesh)[0]
+    electric_field_filter_c(n_points, &grid[0], &data_array[0], L, n_fine_mesh, &fine_mesh[0], &Res[0])
+    return Res
 

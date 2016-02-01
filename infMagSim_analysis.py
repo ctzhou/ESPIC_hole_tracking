@@ -20,7 +20,7 @@ import IPython.core.display as IPdisp
 
 # <codecell>
 
-folder = "/scratch/chaako/fromLoki/lineSim*/"
+folder = "./"
 file_names = glob.glob(folder + "l*.npz")
 file_names.sort()
 i=0
