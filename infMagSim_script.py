@@ -17,7 +17,7 @@ if (mpi_id==0):
 from scipy.stats import norm
 from infMagSim_cython import *
 
-STORAGE_PATH = "/tmp/"
+STORAGE_PATH = "~/tmp/"
 read_ion_dist_from_file = False
 smooth_ion_velocities = False
 read_electron_dist_from_file = read_ion_dist_from_file
@@ -26,7 +26,7 @@ dist_filename = ''
 project_read_particles = False
 projection_angle = np.pi*5/16.
 create_electron_dimple = True
-moving_box_simulation = True # Using a box that tracks the movement of the hole
+moving_box_simulation = False # Using a box that tracks the movement of the hole
 counter_streaming_ion_beams = False # Simulate counterstreaming ion beams
 v_d_1 = 5. # drift velocity of first ion beam
 v_d_2 = -5. # drift velocity of second ion beam
@@ -275,10 +275,10 @@ if quiet_start_and_injection:
 else:
     injection_sampler = uniform_2d_sampler
 
-sigma = 40. #sigma is the temperature ratio Te/Ti
+sigma = 20. #sigma is the temperature ratio Te/Ti
 v_th_i = 1.
-v_d_i = 0.
-n_ions = 500000
+v_d_i = 0. #The drift velocity of ion population  
+n_ions = 1000000
 # This is the initial number of ions inside the computation domain
 n_ions_infinity = n_ions 
 extra_storage_factor = 6
@@ -534,10 +534,11 @@ t_object_center = (1.+4.*pot_transp_elong*debye_length)/v_drift
 t = 0.
 v_b_0 = 0. # inital box velocity
 a_b_0 = 0. # initial box acceleration
+step_size = 0.4
 if boltzmann_electrons:
     dt = 0.05*debye_length/v_th_i
 else:
-    dt = 0.3*debye_length/v_th_e
+    dt = step_size*debye_length/v_th_e
 ion_charge_to_mass = 1
 if (mpi_id==0):
     print 't_object_center, dt', t_object_center, dt
@@ -611,7 +612,7 @@ ions_extra = np.zeros([2,n_steps+1], dtype=np.float32) # The velocities and acce
 hole_relative_positions = np.zeros(n_steps, dtype=np.float32) # initialization of electron hole relative positions
 hole_velocities = np.zeros(n_steps, dtype=np.float32) # Array of electron hole relative velocities
 initial_transient_steps = 10 # Hole tracking will work only when we have a fully developped hole potential, need to skip the initial transient
-Wn = .002 # Cut-off frequency of Butterworth filter
+Wn = .005*step_size # Cut-off frequency of Butterworth filter, this value is time step dependent but constant in real frequency domain. It is set to 0.005 Wpe.
 N_filter = 2 # Order of Butterworth filter
 #W_smoothing = 2.*debye_length/v_th_e # Rectangle smoothing window length in the control law
 W_smoothing = 0.
@@ -621,7 +622,7 @@ damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
 B, A = signal.butter(N_filter,Wn,output='ba') # Numerator and denominator of IIR filter 
 def hole_position_tracking(potential,dz,L,grid,fine_mesh,fine_dz):
-    search_factor = 12
+    search_factor = 24
     search_center = fine_mesh.shape[0]/2
     half_search_range = search_factor*int(math.floor(L/fine_dz))
     signal = electric_field_filter(grid,np.gradient(potential,dz),L,fine_mesh)
@@ -829,7 +830,7 @@ for k in range(n_steps):
             n_ions_inject_2 += 1
         n_ions_inject = n_ions_inject_1+n_ions_inject_2
     else:
-        expected_ion_injection = expected_particle_injection(n_ions_infinity/(z_max-z_min),v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k],dt)
+        expected_ion_injection = expected_particle_injection(n_ions_infinity/(z_max-z_min),v_th_i/np.sqrt(sigma),box[0,k]+ions_extra[0,k]-v_d_i,dt)
         n_ions_inject = int(expected_ion_injection)
         if (expected_ion_injection-n_ions_inject)>np.random.rand():
             n_ions_inject += 1
@@ -858,7 +859,7 @@ for k in range(n_steps):
 			     current_empty_ion_slot, largest_ion_index, ion_density)
         else:
             inject_particles(n_ions_inject, grid, dt, v_th_i/np.sqrt(sigma), background_ion_density, \
-			     injection_sampler, box[0,k]+ions_extra[0,k], box[1,k]+ions_extra[1,k], \
+			     injection_sampler, box[0,k]+ions_extra[0,k]-v_d_i, box[1,k]+ions_extra[1,k], \
                              k, ions_injection_history, ions, empty_ion_slots, \
 			     current_empty_ion_slot, largest_ion_index, ion_density)
     if injection_sampler.shared_seed:
