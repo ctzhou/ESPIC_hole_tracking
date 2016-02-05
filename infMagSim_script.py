@@ -612,6 +612,7 @@ ions_extra = np.zeros([2,n_steps+1], dtype=np.float32) # The velocities and acce
 hole_relative_positions = np.zeros(n_steps, dtype=np.float32) # initialization of electron hole relative positions
 hole_velocities = np.zeros(n_steps, dtype=np.float32) # Array of electron hole relative velocities
 initial_transient_steps = 10 # Hole tracking will work only when we have a fully developped hole potential, need to skip the initial transient
+box[0] = v_b_0*np.ones(n_steps+1).astype(np.float32) # initialize hole velocity
 Wn = .005*step_size # Cut-off frequency of Butterworth filter, this value is time step dependent but constant in real frequency domain. It is set to 0.005 Wpe.
 N_filter = 2 # Order of Butterworth filter
 #W_smoothing = 2.*debye_length/v_th_e # Rectangle smoothing window length in the control law
