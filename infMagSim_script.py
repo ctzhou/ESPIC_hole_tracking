@@ -17,7 +17,62 @@ if (mpi_id==0):
 from scipy.stats import norm
 from infMagSim_cython import *
 
-STORAGE_PATH = "~/tmp/"
+# Read input data from input.txt file
+if (mpi_id==0):
+    with open("input.txt") as input_file:
+        for line in input_file:
+            print line.split()[0]
+            if (line.split()[0]=='n_steps'):
+                n_steps_in = int(line.split()[1])
+            elif (line.split()[0]=='n_particles'):
+                n_particles_in = int(line.split()[1])
+            elif (line.split()[0]=='step_size'):
+                step_size_in = float(line.split()[1])
+            elif (line.split()[0]=='v_d_i'):
+                v_d_i_in = float(line.split()[1])
+            elif (line.split()[0]=='dimple_velocity'):
+                dimple_velocity_in = float(line.split()[1])
+            elif (line.split()[0]=='dimple_height'):
+                dimple_height_in = float(line.split()[1])
+            elif (line.split()[0]=='dimple_velocity_width'):
+                dimple_velocity_width_in = float(line.split()[1])
+            elif (line.split()[0]=='dimple_spatial_width'):
+                dimple_spatial_width_in = float(line.split()[1])
+            elif (line.split()[0]=='mass_ratio'):
+                mass_ratio_in = float(line.split()[1])
+            elif (line.split()[0]=='Te/Ti'):
+                sigma_in = float(line.split()[1])
+            elif (line.split()[0]=='v_b_0'):
+                v_b_0_in = float(line.split()[1])
+            elif (line.split()[0]=='n_cells'):
+                n_cells_in = int(line.split()[1])
+else:
+    n_steps_in = None
+    n_particles_in = None
+    step_size_in = None
+    v_d_i_in = None
+    dimple_velocity_in = None
+    dimple_height_in = None
+    dimple_velocity_width_in = None
+    dimple_spatial_width_in = None
+    mass_ratio_in = None
+    sigma_in = None
+    v_b_0_in = None
+    n_cells_in = None
+    
+n_steps_in = comm.bcast(n_steps_in,root=0)
+n_particles_in = comm.bcast(n_particles_in,root=0)
+step_size_in = comm.bcast(step_size_in,root=0)
+v_d_i_in = comm.bcast(v_d_i_in,root=0)
+dimple_velocity_in = comm.bcast(dimple_velocity_in,root=0)
+dimple_height_in = comm.bcast(dimple_height_in,root=0)
+dimple_velocity_width_in = comm.bcast(dimple_velocity_width_in,root=0)
+dimple_spatial_width_in = comm.bcast(dimple_spatial_width_in,root=0)
+mass_ratio_in = comm.bcast(mass_ratio_in,root=0)
+sigma_in = comm.bcast(sigma_in,root=0)
+v_b_0_in = comm.bcast(v_b_0_in,root=0)
+n_cells_in = comm.bcast(n_cells_in,root=0)
+
 read_ion_dist_from_file = False
 smooth_ion_velocities = False
 read_electron_dist_from_file = read_ion_dist_from_file
@@ -139,7 +194,7 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
 
 z_min = -3.
 z_max = 3.
-n_cells = 200
+n_cells = n_cells_in
 n_points = n_cells+1
 n_tracking_mesh_points = 1001
 eps = 1e-6
@@ -275,10 +330,10 @@ if quiet_start_and_injection:
 else:
     injection_sampler = uniform_2d_sampler
 
-sigma = 20. #sigma is the temperature ratio Te/Ti
+sigma = sigma_in #sigma is the temperature ratio Te/Ti
 v_th_i = 1.
-v_d_i = 0. #The drift velocity of ion population  
-n_ions = 1000000
+v_d_i = v_d_i_in #The drift velocity of ion population  
+n_ions = n_particles_in
 # This is the initial number of ions inside the computation domain
 n_ions_infinity = n_ions 
 extra_storage_factor = 6
@@ -385,7 +440,7 @@ if (mpi_id==0):
 
 
 #if not boltzmann_electrons:
-mass_ratio = 1./1836.
+mass_ratio = 1./mass_ratio_in
 n_electrons = n_ions
 n_electrons_infinity = n_ions_infinity
 v_th_e = 1./math.sqrt(mass_ratio)
@@ -394,10 +449,10 @@ background_electron_density = n_electrons_infinity*n_engines*dz/(z_max-z_min)
 n_bins = n_points;
 v_max_e = 4.*v_th_e
 v_min_e = -v_max_e
-dimple_velocity_width = v_th_e/15
-dimple_velocity = 1.
-dimple_height = 0.9
-dimple_spatial_width = 4*debye_length
+dimple_velocity_width = v_th_e*dimple_velocity_width_in
+dimple_velocity = dimple_velocity_in
+dimple_height = dimple_height_in
+dimple_spatial_width = dimple_spatial_width_in*debye_length
 def dimple(v, x, mu=dimple_velocity, sig=dimple_velocity_width, height=dimple_height, Lambda=dimple_spatial_width):
     return height*np.exp( -np.power(v-mu,2.) / (2*np.power(sig,2.)) )*np.exp(-np.power(x,2.) / (2*np.power(Lambda,2.))) 
 
@@ -532,9 +587,9 @@ pot_transp_elong = 2.
 object_radius = 1.
 t_object_center = (1.+4.*pot_transp_elong*debye_length)/v_drift
 t = 0.
-v_b_0 = 0. # inital box velocity
+v_b_0 = v_b_0_in # inital box velocity
 a_b_0 = 0. # initial box acceleration
-step_size = 0.4
+step_size = step_size_in
 if boltzmann_electrons:
     dt = 0.05*debye_length/v_th_i
 else:
@@ -597,7 +652,7 @@ if not boltzmann_electrons:
 injection_numbers = np.zeros(n_engines,dtype=np.int32)
 
 
-n_steps = 10000
+n_steps = n_steps_in
 storage_step = 10
 store_all_until_step = 10
 print_step = 100
@@ -617,8 +672,8 @@ Wn = .005*step_size # Cut-off frequency of Butterworth filter, this value is tim
 N_filter = 2 # Order of Butterworth filter
 #W_smoothing = 2.*debye_length/v_th_e # Rectangle smoothing window length in the control law
 W_smoothing = 0.
-alpha = 15.*1e-3*v_th_e**2/debye_length**2 # Control parameter on hole position 10. default
-beta = 5.*v_th_e/debye_length # Control parameter on hole velocity 5. default
+alpha = 20.*1e-3*v_th_e**2/debye_length**2 # Control parameter on hole position 20. default
+beta = 6.*v_th_e/debye_length # Control parameter on hole velocity 6. default
 damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
 B, A = signal.butter(N_filter,Wn,output='ba') # Numerator and denominator of IIR filter 
@@ -907,18 +962,19 @@ if (mpi_id==0):
     electron_distribution_functions_np = np.array(electron_distribution_functions, dtype=np.float32) # actuall int
     trapped_electron_distribution_functions_np = np.array(trapped_electron_distribution_functions, dtype=np.float32)
     n_ions_total = n_ions*n_engines
+    hole_depth = np.average(np.amax(potentials,axis=1)[store_all_until_step:])
     if set_background_acceleration and not counter_streaming_ion_beams: 
         filename_base = \
-	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_ions_acc'
+	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_hole_depth'+('%.2f' % hole_depth)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_mratio'+('%.0f' % mass_ratio_in)+'_nsteps'+('%.1e' %n_steps)+'_ions_acc'
     elif counter_streaming_ion_beams and not set_background_acceleration:
         filename_base = \
-            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)
+            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_hole_depth'+('%.2f' % hole_depth)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_mratio'+('%.0f' % mass_ratio_in)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)
     elif counter_streaming_ion_beams and set_background_acceleration:
         filename_base = \
-            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)+'_ions_acc'
+            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_hole_depth'+('%.2f' % hole_depth)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_mratio'+('%.0f' % mass_ratio_in)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)+'_ions_acc'
     else:
         filename_base = \
-	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)
+	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_hole_depth'+('%.2f' % hole_depth)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_mratio'+('%.0f' % mass_ratio_in)+'_nsteps'+('%.1e' %n_steps)
     print filename_base
     try:
         np.savez(os.path.join(STORAGE_PATH,filename_base), grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \
