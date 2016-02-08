@@ -17,7 +17,7 @@ if (mpi_id==0):
 from scipy.stats import norm
 from infMagSim_cython import *
 
-STORAGE_PATH = "/tmp/"
+STORAGE_PATH = "home/ctzhou/tmp/"
 read_ion_dist_from_file = False
 smooth_ion_velocities = False
 read_electron_dist_from_file = read_ion_dist_from_file
@@ -26,7 +26,7 @@ dist_filename = ''
 project_read_particles = False
 projection_angle = np.pi*5/16.
 create_electron_dimple = True
-moving_box_simulation = True # Using a box that tracks the movement of the hole
+moving_box_simulation = False # Using a box that tracks the movement of the hole
 counter_streaming_ion_beams = False # Simulate counterstreaming ion beams
 v_d_1 = 5. # drift velocity of first ion beam
 v_d_2 = -5. # drift velocity of second ion beam
@@ -38,7 +38,7 @@ time_steps_immobile_electrons = 0 #number of time steps before which electrons a
 prescribed_potential_growth_cycles = 600 
 set_background_acceleration = False
 start_step_background_acc = 5000
-end_step_background_acc = 8000
+end_step_background_acc = 12000
 start_step_background_acc_phase2 = 15000
 end_step_background_acc_phase2 = 22000
 def prescribed_potential(grid, t, debye_length=1.):
@@ -139,7 +139,7 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
 
 z_min = -3.
 z_max = 3.
-n_cells = 200
+n_cells = 1000
 n_points = n_cells+1
 n_tracking_mesh_points = 1001
 eps = 1e-6
@@ -275,10 +275,10 @@ if quiet_start_and_injection:
 else:
     injection_sampler = uniform_2d_sampler
 
-sigma = 40. #sigma is the temperature ratio Te/Ti
+sigma = 20. #sigma is the temperature ratio Te/Ti
 v_th_i = 1.
 v_d_i = 0.
-n_ions = 500000
+n_ions = 200000
 # This is the initial number of ions inside the computation domain
 n_ions_infinity = n_ions 
 extra_storage_factor = 6
@@ -396,7 +396,7 @@ v_max_e = 4.*v_th_e
 v_min_e = -v_max_e
 dimple_velocity_width = v_th_e/15
 dimple_velocity = 1.
-dimple_height = 0.9
+dimple_height = 0.9 
 dimple_spatial_width = 4*debye_length
 def dimple(v, x, mu=dimple_velocity, sig=dimple_velocity_width, height=dimple_height, Lambda=dimple_spatial_width):
     return height*np.exp( -np.power(v-mu,2.) / (2*np.power(sig,2.)) )*np.exp(-np.power(x,2.) / (2*np.power(Lambda,2.))) 
@@ -532,12 +532,13 @@ pot_transp_elong = 2.
 object_radius = 1.
 t_object_center = (1.+4.*pot_transp_elong*debye_length)/v_drift
 t = 0.
-v_b_0 = 0. # inital box velocity
+v_b_0 = 6.47 # inital box velocity
 a_b_0 = 0. # initial box acceleration
+step_size = 0.3
 if boltzmann_electrons:
     dt = 0.05*debye_length/v_th_i
 else:
-    dt = 0.3*debye_length/v_th_e
+    dt = step_size*debye_length/v_th_e
 ion_charge_to_mass = 1
 if (mpi_id==0):
     print 't_object_center, dt', t_object_center, dt
@@ -548,8 +549,8 @@ object_center_mask = np.zeros_like(grid) # Could make 1 shorter
 if include_object:
     circular_cross_section(grid,1.e-8,1.,1.,1.,object_center_mask)
 potential = np.zeros_like(grid)
-background_potential = np.linspace(2.3, 0., num=n_points, endpoint=True).astype(np.float32)
-background_potential_phase2 = np.linspace(2.3, 0., num=n_points, endpoint=True).astype(np.float32)
+background_potential = np.linspace(5., 0., num=n_points, endpoint=True).astype(np.float32)
+background_potential_phase2 = np.linspace(0., 5., num=n_points, endpoint=True).astype(np.float32)
 potential_ions = potential 
 if decouple_ions_from_electrons:
     potential_electrons = np.zeros_like(grid)
@@ -596,7 +597,7 @@ if not boltzmann_electrons:
 injection_numbers = np.zeros(n_engines,dtype=np.int32)
 
 
-n_steps = 10000
+n_steps = 6000
 storage_step = 10
 store_all_until_step = 10
 print_step = 100
@@ -611,7 +612,8 @@ ions_extra = np.zeros([2,n_steps+1], dtype=np.float32) # The velocities and acce
 hole_relative_positions = np.zeros(n_steps, dtype=np.float32) # initialization of electron hole relative positions
 hole_velocities = np.zeros(n_steps, dtype=np.float32) # Array of electron hole relative velocities
 initial_transient_steps = 10 # Hole tracking will work only when we have a fully developped hole potential, need to skip the initial transient
-Wn = .002 # Cut-off frequency of Butterworth filter
+box[0] = v_b_0*np.ones(n_steps+1).astype(np.float32) # initialize hole velocity
+Wn = .005*step_size # Cut-off frequency of Butterworth filter, this value is time step dependent but constant in real frequency domain. It is set to 0.005 Wpe.
 N_filter = 2 # Order of Butterworth filter
 #W_smoothing = 2.*debye_length/v_th_e # Rectangle smoothing window length in the control law
 W_smoothing = 0.
@@ -621,7 +623,7 @@ damping_start_step = 1 # don't make zero to avoid large initial derivative
 damping_end_step = 0 # make <= damping_start_step to disable damping
 B, A = signal.butter(N_filter,Wn,output='ba') # Numerator and denominator of IIR filter 
 def hole_position_tracking(potential,dz,L,grid,fine_mesh,fine_dz):
-    search_factor = 12
+    search_factor = 24
     search_center = fine_mesh.shape[0]/2
     half_search_range = search_factor*int(math.floor(L/fine_dz))
     signal = electric_field_filter(grid,np.gradient(potential,dz),L,fine_mesh)
@@ -905,18 +907,19 @@ if (mpi_id==0):
     electron_distribution_functions_np = np.array(electron_distribution_functions, dtype=np.float32) # actuall int
     trapped_electron_distribution_functions_np = np.array(trapped_electron_distribution_functions, dtype=np.float32)
     n_ions_total = n_ions*n_engines
+    inverse_mass_ratio = 1./mass_ratio
     if set_background_acceleration and not counter_streaming_ion_beams: 
         filename_base = \
-	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_ions_acc'
+	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_mratio'+('%.3f' %inverse_mass_ratio)+'_nsteps'+('%.1e' %n_steps)+'_ions_acc'
     elif counter_streaming_ion_beams and not set_background_acceleration:
         filename_base = \
-            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)
+            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_mratio'+('%.3f' %inverse_mass_ratio)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)
     elif counter_streaming_ion_beams and set_background_acceleration:
         filename_base = \
-            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)+'_ions_acc'
+            'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_mratio'+('%.3f' %inverse_mass_ratio)+'_nsteps'+('%.1e' %n_steps)+'_counter_beams_'+'v1_'+('%.2f' % v_d_1)+'v2_'+('%.2f' % v_d_2)+'_ions_acc'
     else:
         filename_base = \
-	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_nsteps'+('%.1e' %n_steps)
+	'l'+('%.4f' % debye_length)+'_Vd'+('%.3f' % dimple_velocity)+'_np'+('%.1e' % n_points)+'_ni'+('%.1e' % n_ions_total)+'_dt'+('%.1e' % dt)+'_sigma'+('%.1e' % sigma)+'_mratio'+('%.3f' %inverse_mass_ratio)+'_nsteps'+('%.1e' %n_steps)
     print filename_base
     try:
         np.savez(os.path.join(STORAGE_PATH,filename_base), grid=grid, times=times_np, object_masks=object_masks_np, potentials=potentials_np, \

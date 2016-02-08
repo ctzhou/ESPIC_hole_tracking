@@ -11,10 +11,10 @@ all : infMagSim_cython.so
 
 infMagSim_cython.so: Makefile infMagSim_c.o infMagSim_cython.pyx
 	touch infMagSim_cython.pyx
-	python setup.py build_ext --inplace
+	CC=gcc python setup.py build_ext --inplace
 
 infMagSim_c.o: infMagSim_c.c Makefile
-	gcc -pthread -fPIC -fwrapv -O2 -Wall -fno-strict-aliasing \
+	gcc -pthread -fwrapv -O2 -Wall -fno-strict-aliasing \
 		-o infMagSim_c.o -c infMagSim_c.c
 
 infMagSim_cython.pyx: infMagSim_cython.py
