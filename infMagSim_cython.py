@@ -234,7 +234,7 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
     cdef int largest_index = largest_index_list[0]
     cdef int current_empty_slot = current_empty_slot_list[0]
     cdef int n_points = len(grid)
-    cdef float eps=1.e-6
+    cdef float eps=2.e-6
     cdef float z_min = grid[0]
     cdef float z_max = grid[n_points-1]
     cdef float dz = (z_max-z_min)/(n_points-1)
@@ -258,20 +258,20 @@ def inject_particles(int n_inject, np.ndarray[np.float32_t,ndim=1] grid, float d
         #particles[1,i] = velocity_sign*np.fabs(velocities[l])
         #if (velocity_sign<0.):
         # TODO: debye length shorter than eps could give problems with below
-        particles[1,i] = velocities[l]
         particles_hist[0,i] = k
+        particles[1,i] = velocities[l] - a_b*partial_dt[l] # Update the velocity taking into account the acceleration of the frame
         if (velocities[l]<0.):
             particles[0,i] = z_max-eps + partial_dt[l]*particles[1,i]
             count_neg += 1
         else:
             particles[0,i] = z_min+eps + partial_dt[l]*particles[1,i]
             count_pos += 1
-        particles[1,i] = velocities[l] - a_b*partial_dt[l] # Update the velocity taking into account the acceleration of the frame
         if (i>largest_index):
             largest_index = i
         left_index = int((particles[0,i]-z_min)/dz)
         if (left_index<0 or left_index>n_points-2):
             print 'bad left_index:', left_index, z_min, particles[0,i], z_max, particles[1,i], partial_dt[l]
+            #print particles[0,i]-z_min, dz, z_max-eps+partial_dt[l]*particles[1,i]
         else:
             if (particles[0,i]>0):
                 fraction_to_left = math.fmod(particles[0,i],dz)/dz
