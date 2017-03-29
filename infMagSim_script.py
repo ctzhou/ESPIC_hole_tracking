@@ -20,6 +20,16 @@ from infMagSim_cython import *
 STORAGE_PATH = "./"
 # Read input data from input.txt file
 if (mpi_id==0):
+# Default values:
+    step_size_in = 0.3
+    v_d_i_in = 0.
+    v_b_0_in = 0.
+    amplitude_perturbation_in = 0.
+    background_acceleration_in = 0.
+    density_growth_rate = 0.
+    counter_streaming_ion_beams = False
+    v_d_1 = 0.
+    v_d_2 = 0.
     with open("input.txt") as input_file:
         for line in input_file:
             print line.split()[0]
@@ -58,7 +68,17 @@ if (mpi_id==0):
             elif (line.split()[0]=='hole_pushing_start_step'):
                 hole_pushing_start_step = int(line.split()[1])
             elif (line.split()[0]=='hole_pushing_end_step'):
-                hole_pushing_end_step = int(line.split()[1])            
+                hole_pushing_end_step = int(line.split()[1])
+            elif (line.split()[0]=='background_density_growth_start_step'):
+                density_growth_start_step = int(line.split()[1])
+            elif (line.split()[0]=='density_growth_rate'):
+                density_growth_rate = float(line.split()[1])
+            elif (line.split()[0]=='counter_streaming_ions'):
+                counter_streaming_ion_beams = True
+                v_d_1 = float(line.split()[1])
+                v_d_2 = float(line.split()[2])
+                
+
 
 else:
     n_steps_in = None
@@ -79,7 +99,11 @@ else:
     hole_pushing_start_step = None
     hole_pushing_end_step = None
     background_acceleration_in = None
-
+    density_growth_start_step = None
+    density_growth_rate = None
+    counter_streaming_ion_beams = None
+    v_d_1 = None
+    v_d_2 = None
     
 n_steps_in = comm.bcast(n_steps_in,root=0)
 n_particles_in = comm.bcast(n_particles_in,root=0)
@@ -99,6 +123,12 @@ amplitude_perturbation_in = comm.bcast(amplitude_perturbation_in,root=0)
 hole_pushing_start_step = comm.bcast(hole_pushing_start_step,root=0)
 hole_pushing_end_step = comm.bcast(hole_pushing_end_step,root=0)
 background_acceleration_in = comm.bcast(background_acceleration_in,root=0)
+density_growth_start_step = comm.bcast(density_growth_start_step,root=0)
+density_growth_rate = comm.bcast(density_growth_rate,root=0)
+counter_streaming_ion_beams = comm.bcast(counter_streaming_ion_beams,root=0)
+v_d_1 = comm.bcast(v_d_1,root=0)
+v_d_2 = comm.bcast(v_d_2,root=0)
+
 
 read_ion_dist_from_file = False
 smooth_ion_velocities = False
@@ -108,18 +138,20 @@ dist_filename = ''
 project_read_particles = False
 projection_angle = np.pi*5/16.
 create_electron_dimple = True
-moving_box_simulation = True # Using a box that tracks the movement of the hole
-counter_streaming_ion_beams = False # Simulate counterstreaming ion beams
-v_d_1 = 6.5 # drift velocity of first ion beam
-v_d_2 = -6.5 # drift velocity of second ion beam
+moving_box_simulation = False # Using a box that tracks the movement of the hole
+#counter_streaming_ion_beams = False # Simulate counterstreaming ion beams
+#v_d_1 = 6.5 # drift velocity of first ion beam
+#v_d_2 = -6.5 # drift velocity of second ion beam
 periodic_particles = False
 periodic_potential = periodic_particles
 prescribe_potential = False
 time_steps_immobile_ions = 30000 #number of time steps after which ions are immobile
 time_steps_immobile_electrons = 0 #number of time steps before which electrons are immobile
 prescribed_potential_growth_cycles = 600
-if (hole_pushing_start_step>0):
+if (hole_pushing_start_step>0 and hole_pushing_start_step<n_steps_in):
     set_background_acceleration = True # Switch to set an artificial background acceleration on ions
+else:
+    set_background_acceleration = False
 start_step_background_acc = hole_pushing_start_step 
 end_step_background_acc = hole_pushing_end_step
 background_acceleration = background_acceleration_in
@@ -221,8 +253,8 @@ def circular_cross_section(grid, t, t_center, v_drift, radius, object_mask):
 #        Res.append(np.multiply(data_array,H).sum())
 #    return Res
 
-z_min = -6.
-z_max = 6.
+z_min = -3.
+z_max = 3.
 n_cells = n_cells_in
 n_points = n_cells+1
 n_tracking_mesh_points = 1001
@@ -366,7 +398,7 @@ v_d_i = v_d_i_in #The drift velocity of ion population
 n_ions = n_particles_in
 # This is the initial number of ions inside the computation domain
 n_ions_infinity = n_ions 
-extra_storage_factor = 6
+extra_storage_factor = 10
 background_ion_density = n_ions_infinity*n_engines*dz/(z_max-z_min)
 n_bins = n_points
 v_max_i = 20.*v_th_i
@@ -484,9 +516,10 @@ dimple_velocity = dimple_velocity_in
 dimple_height = dimple_height_in
 dimple_spatial_width = dimple_spatial_width_in*debye_length
 def dimple(v, x, mu=dimple_velocity, sig=dimple_velocity_width, height=dimple_height, Lambda=dimple_spatial_width):
-    return height*np.exp(-np.power(v-mu,2.) / (2*np.power(sig,2.)) )*np.exp(-np.power(x,2.) / (2*np.power(Lambda,2.))) 
+#    return height*np.exp(-np.power(v-mu,2.) / (2*np.power(sig,2.)) )*np.exp(-np.power(x,2.) / (2*np.power(Lambda,2.))) 
+    return height*np.exp(-np.power(v-mu,2.)/(2*np.power(sig,2.)))/(1.+0.0002*np.exp(np.abs(x)/Lambda))
 #def dimple(v, x, mu=dimple_velocity, sig=dimple_velocity_width, height=dimple_height, Lambda=dimple_spatial_width):
-    return height*(1-np.power(v-mu,2.)/np.power(sig,2.))*np.exp(-np.power(x,2.) / (2*np.power(Lambda,2.))) 
+#    return height*(1-np.power(v-mu,2.)/np.power(sig,2.))*np.exp(-np.power(x,2.) / (2*np.power(Lambda,2.))) 
 
 electron_hist_n_edges = np.arange(z_min,z_max+eps,(z_max-z_min)/n_bins)
 electron_hist_v_edges = np.arange(v_min_e,v_max_e+eps,(v_max_e-v_min_e)/n_bins)
@@ -685,8 +718,8 @@ injection_numbers = np.zeros(n_engines,dtype=np.int32)
 
 
 n_steps = n_steps_in
-storage_step = 10
-store_all_until_step = 10
+storage_step = 1
+store_all_until_step = 100
 print_step = 100
 #mass_correction = math.sqrt(1./1836./mass_ratio)
 #debye_correction = 0.04/debye_length
@@ -698,7 +731,8 @@ box = np.zeros([2,n_steps+1], dtype=np.float32) # initialization of box velocity
 ions_extra = np.zeros([2,n_steps+1], dtype=np.float32) # The velocities and acceleration due to background ion acceleration, zero if background acceleration is turned off.
 hole_relative_positions = np.zeros(n_steps, dtype=np.float32) # initialization of electron hole relative positions
 hole_velocities = np.zeros(n_steps, dtype=np.float32) # Array of electron hole relative velocities
-initial_transient_steps = 10 # Hole tracking will work only when we have a fully developped hole potential, need to skip the initial transient
+initial_transient_steps = 80 # Hole tracking will work only when we have a fully developped hole potential, need to skip the initial transient
+hole_tracking_start_step = 100
 box[0] = v_b_0*np.ones(n_steps+1).astype(np.float32) # initialize hole velocity
 Wn = .005*step_size # Cut-off frequency of Butterworth filter, this value is time step dependent but constant in real frequency domain. It is set to 0.005 Wpe.
 N_filter = 2 # Order of Butterworth filter
@@ -862,15 +896,18 @@ for k in range(n_steps):
     if k>initial_transient_steps:
         hole_relative_positions[k] = hole_position_tracking(potential,dz,debye_length*4.,grid,fine_mesh,fine_dz) 
     # give the relative hole position in the box by hole tracking
+    #if (mpi_id==0): # Ion density and potentials are stored at every time step
+        #ion_densities.append(np.copy(ion_density))
+        #potentials.append(np.copy(potential))
     if ((k%storage_step==0 or k<store_all_until_step) and mpi_id==0):
         times.append(t)
+        potentials.append(np.copy(potential))
         object_masks.append(np.copy(object_mask))
-        ion_densities.append(np.copy(ion_density))
 	electron_densities.append(np.copy(electron_density))
 	charge_derivatives.append(np.copy(charge_derivative))
-        potentials.append(np.copy(potential))
-	potentials_electrons.append(np.copy(potential_electrons))
+        potentials_electrons.append(np.copy(potential_electrons))
         electric_fields.append(np.copy(electric_field))
+        ion_densities.append(np.copy(ion_density))
         ion_distribution_functions.append(np.copy(ion_hist2d))
 	if not boltzmann_electrons:
 	    electron_distribution_functions.append(np.copy(electron_hist2d))
@@ -879,7 +916,7 @@ for k in range(n_steps):
 	print 'Step ', k, '  Max potentials each step:'
     hole_velocities[k] = (hole_relative_positions[k]-hole_relative_positions[k-1])/dt+box[0,k] # Apply some filtering to smooth out the hole velocity
     hole_velocities_f = signal.filtfilt(B,A,hole_velocities[0:k+1],padlen=0)
-    if (moving_box_simulation and k<hole_tracking_end_step_in):
+    if (moving_box_simulation and k<hole_tracking_end_step_in and k>hole_tracking_start_step):
        #box[0,k+1] = np.average(box[0,max(0,k-np.floor(W_smoothing/dt)):k+1])\
                      #+alpha*dt*(hole_relative_positions[k]-0.)+beta*dt*(hole_relative_positions[k]-hole_relative_positions[k-1])/dt
        box[0,k+1] = np.average(box[0,max(0,k-np.floor(W_smoothing/dt)):k+1])\
@@ -910,10 +947,13 @@ for k in range(n_steps):
             move_particles(grid, object_mask, potential_electrons, dt, electron_charge_to_mass, \
 			   background_electron_density, largest_electron_index, \
 			   electrons, electron_density, empty_electron_slots, current_empty_electron_slot, a_b=box[1,k],\
-			   periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover,)
+			   periodic_particles=periodic_particles, use_pure_c_version=use_pure_c_mover)
+    background_density_growth_factor = np.exp(max(0,k-density_growth_start_step)*density_growth_rate*step_size)
     if counter_streaming_ion_beams: 
         expected_ion_injection_1 = expected_particle_injection(n_ions_infinity/(z_max-z_min)/2.,v_th_i/np.sqrt(sigma),box[0,k+1]+ions_extra[0,k]-v_d_1,dt)
         expected_ion_injection_2 = expected_particle_injection(n_ions_infinity/(z_max-z_min)/2.,v_th_i/np.sqrt(sigma),box[0,k+1]+ions_extra[0,k]-v_d_2,dt)
+        expected_ion_injection_1 = expected_ion_injection_1*background_density_growth_factor
+        expected_ion_injection_2 = expected_ion_injection_2*background_density_growth_factor
         n_ions_inject_1 = int(expected_ion_injection_1)
         n_ions_inject_2 = int(expected_ion_injection_2)
         if (expected_ion_injection_1-n_ions_inject_1)>np.random.rand():
@@ -924,12 +964,14 @@ for k in range(n_steps):
     else:
         expected_ion_injection = expected_particle_injection(n_ions_infinity/(z_max-z_min),v_th_i/np.sqrt(sigma),box[0,k+1]+ions_extra[0,k]-v_d_i,dt)
         expected_ion_injection = expected_ion_injection*(1-amplitude_perturbation_in*np.sin(max(0,k-hole_tracking_end_step_in)*dt*w_ion_perturbation))
+        expected_ion_injection = expected_ion_injection*background_density_growth_factor
         # Small perturbation in the injected ion density to drive ion-acoustic waves, applied after the hole tracking is turned off.
         n_ions_inject = int(expected_ion_injection)
         if (expected_ion_injection-n_ions_inject)>np.random.rand():
             n_ions_inject += 1
     if not boltzmann_electrons:
         expected_electron_injection = expected_particle_injection(n_electrons_infinity/(z_max-z_min),v_th_e,box[0,k+1],dt)
+        expected_electron_injection = expected_electron_injection*background_density_growth_factor
 	n_electrons_inject = int(expected_electron_injection)
     # If expected injection number is small, need to add randomness to get right average rate
     # TODO: unify random number usage with sampler
@@ -1001,7 +1043,7 @@ if (mpi_id==0):
     trapped_electron_distribution_functions_np = np.array(trapped_electron_distribution_functions, dtype=np.float32)
     n_ions_total = n_ions*n_engines
     if set_background_acceleration:
-        hole_depth = np.average(np.amax(potentials,axis=1)[100:start_step_background_acc])
+        hole_depth = np.average(np.amax(potentials,axis=1)[100:int(start_step_background_acc/storage_step)])
     else:
         hole_depth = np.average(np.amax(potentials,axis=1)[100:])
     if set_background_acceleration and not counter_streaming_ion_beams: 
